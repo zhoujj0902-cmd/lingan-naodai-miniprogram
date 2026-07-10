@@ -1,0 +1,250 @@
+const store = require("../../utils/store");
+const clipboardStore = require("../../utils/clipboardStore");
+const duplicate = require("../../utils/duplicate");
+const imageUtils = require("../../utils/image");
+const security = require("../../utils/security");
+const tagStore = require("../../utils/tagStore");
+const CUSTOM_TAG_KEY = "__custom__";
+
+Page({
+  data: {
+    lastPromptedClipboard: "",
+    acceptedClipboard: "",
+    content: "",
+    images: [],
+    imageTags: tagStore.getDefaultTags(),
+    customImageTags: [],
+    selectedImageTag: "",
+    isCustomImageTag: false,
+    customImageTag: "",
+    hasSaved: false,
+    isSaving: false
+  },
+
+  onShow() {
+    this.loadImageTags();
+    this.checkClipboard();
+  },
+
+  loadImageTags() {
+    this.setData({
+      imageTags: tagStore.getDefaultTags(),
+      customImageTags: tagStore.getAll()
+    });
+  },
+
+  checkClipboard() {
+    wx.getClipboardData({
+      success: (res) => {
+        const text = String(res.data || "").trim();
+        if (
+          text &&
+          text !== this.data.content.trim() &&
+          text !== this.data.lastPromptedClipboard &&
+          !clipboardStore.has(text) &&
+          !store.hasContent(text)
+        ) {
+          this.setData({ lastPromptedClipboard: text });
+          wx.showModal({
+            title: "检测到复制内容",
+            content: "要把这段文字塞进灵感脑袋吗？",
+            confirmText: "塞进来",
+            cancelText: "不用",
+            success: (modalRes) => {
+              if (modalRes.confirm) {
+                this.setData({
+                  content: text,
+                  acceptedClipboard: text
+                });
+              }
+            }
+          });
+        }
+      }
+    });
+  },
+
+  onContentInput(event) {
+    this.setData({ content: event.detail.value });
+  },
+
+  chooseImage() {
+    const remaining = Math.max(0, 9 - this.data.images.length);
+    if (!remaining) {
+      wx.showToast({ title: "最多放 9 张图", icon: "none" });
+      return;
+    }
+    wx.chooseMedia({
+      count: remaining,
+      mediaType: ["image"],
+      sourceType: ["album", "camera"],
+      success: async (res) => {
+        const tempImages = (res.tempFiles || [])
+          .map((file) => file.tempFilePath)
+          .filter(Boolean);
+        wx.showLoading({ title: "处理图片中", mask: true });
+        const result = await imageUtils.prepareLocalImages(tempImages);
+        wx.hideLoading();
+        const nextImages = result.images;
+        const errorMessage = imageUtils.getPrepareImagesErrorMessage(result);
+        if (errorMessage) {
+          wx.showToast({ title: errorMessage, icon: "none" });
+        }
+        if (nextImages.length) {
+          this.setData({
+            images: [...this.data.images, ...nextImages],
+            selectedImageTag: this.data.selectedImageTag || tagStore.getFirstSelectableTag(),
+            imageTags: tagStore.getDefaultTags(),
+            customImageTags: tagStore.getAll()
+          });
+          security.precheckImages(nextImages);
+        }
+      }
+    });
+  },
+
+  selectImageTag(event) {
+    const tag = event.currentTarget.dataset.tag || "";
+    this.setData({
+      selectedImageTag: tag,
+      isCustomImageTag: tag === CUSTOM_TAG_KEY
+    });
+  },
+
+  onCustomImageTagInput(event) {
+    this.setData({ customImageTag: event.detail.value });
+  },
+
+  removeImageTag(event) {
+    const tag = event.currentTarget.dataset.tag || "";
+    wx.showModal({
+      title: "删除标签",
+      content: `删除「${tag}」后，新增时不再显示它。`,
+      confirmText: "删除",
+      confirmColor: "#7554e2",
+      success: (res) => {
+        if (!res.confirm) return;
+        tagStore.remove(tag);
+        const isSelected = this.data.selectedImageTag === tag;
+        this.setData({
+          imageTags: tagStore.getDefaultTags(),
+          customImageTags: tagStore.getAll(),
+          selectedImageTag: isSelected ? tagStore.getFirstSelectableTag() : this.data.selectedImageTag,
+          isCustomImageTag: isSelected ? false : this.data.isCustomImageTag
+        });
+      }
+    });
+  },
+
+  removeImage(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const removedImage = this.data.images[index];
+    const images = this.data.images.filter((_, itemIndex) => itemIndex !== index);
+    imageUtils.removeSavedImage(removedImage);
+    this.setData({
+      images,
+      selectedImageTag: images.length ? this.data.selectedImageTag || tagStore.getFirstSelectableTag() : "",
+      isCustomImageTag: images.length ? this.data.isCustomImageTag : false,
+      customImageTag: images.length ? this.data.customImageTag : ""
+    });
+  },
+
+  async save() {
+    if (this.data.isSaving) return;
+    const content = this.data.content.trim();
+    if (!content && !this.data.images.length) {
+      wx.showToast({ title: "先写点或放张图", icon: "none" });
+      return;
+    }
+    if (content && store.hasContent(content)) {
+      wx.showToast({ title: "这段文案已经在脑袋里", icon: "none" });
+      return;
+    }
+
+    let imageFingerprints = [];
+    if (this.data.images.length) {
+      if (this.data.isCustomImageTag && !this.data.customImageTag.trim()) {
+        wx.showToast({ title: "先写自定义标签", icon: "none" });
+        return;
+      }
+    }
+
+    let toast = null;
+    let shouldNavigate = false;
+    const imageTag = this.data.images.length
+      ? this.data.isCustomImageTag
+        ? tagStore.normalizeTag(this.data.customImageTag)
+        : this.data.selectedImageTag || tagStore.getFirstSelectableTag()
+      : "";
+    this.setData({ isSaving: true });
+    wx.showLoading({ title: "正在塞入脑袋", mask: true });
+    try {
+      if (this.data.images.length) {
+        imageFingerprints = await imageUtils.getImageFingerprints(this.data.images);
+        const storedFingerprints = await duplicate.getStoredImageFingerprintSet();
+        const uniqueFingerprints = new Set(imageFingerprints);
+        if (uniqueFingerprints.size !== imageFingerprints.length) {
+          toast = { title: "这次有重复图片", icon: "none" };
+        } else if (imageFingerprints.some((fingerprint) => storedFingerprints.has(fingerprint))) {
+          toast = { title: "图片已经在脑袋里", icon: "none" };
+        } else {
+          const checkResult = await security.checkImages(this.data.images);
+          if (!checkResult.pass) {
+            toast = checkResult.unsafeCount
+              ? { title: "有图片未通过安全检测", icon: "none" }
+              : { title: "图片检测暂时失败", icon: "none" };
+          }
+        }
+      }
+
+      if (!toast) {
+        store.add({
+          content,
+          images: this.data.images,
+          imageFingerprints,
+          imageTag
+        });
+        if (this.data.isCustomImageTag && imageTag) {
+          tagStore.add(imageTag);
+        }
+        if (this.data.acceptedClipboard) {
+          clipboardStore.add(this.data.acceptedClipboard);
+        }
+        toast = { title: "已放进灵感脑袋", icon: "success" };
+        shouldNavigate = true;
+        this.setData({
+          lastPromptedClipboard: "",
+          acceptedClipboard: "",
+          content: "",
+          images: [],
+          selectedImageTag: "",
+          isCustomImageTag: false,
+          customImageTag: "",
+          imageTags: tagStore.getDefaultTags(),
+          customImageTags: tagStore.getAll(),
+          hasSaved: true
+        });
+      }
+    } finally {
+      wx.hideLoading();
+      this.setData({ isSaving: false });
+    }
+
+    if (toast) {
+      wx.showToast(toast);
+    }
+    if (shouldNavigate) {
+      setTimeout(() => {
+        wx.navigateBack({
+          fail: () => wx.redirectTo({ url: "/pages/index/index" })
+        });
+      }, 500);
+    }
+  },
+
+  onUnload() {
+    if (!this.data.hasSaved) {
+      this.data.images.forEach(imageUtils.removeSavedImage);
+    }
+  }
+});

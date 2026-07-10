@@ -1,0 +1,298 @@
+.page,
+page {
+  background: #f6f1ff;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 32rpx 32rpx calc(52rpx + env(safe-area-inset-bottom));
+  background: #f6f1ff;
+}
+
+.hero {
+  padding: 20rpx 14rpx 32rpx;
+}
+
+.title-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 18rpx;
+  margin-bottom: 16rpx;
+}
+
+.title {
+  color: #171425;
+  font-size: 64rpx;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.idea-tag {
+  position: relative;
+  width: 86rpx;
+  height: 48rpx;
+  margin-bottom: 6rpx;
+  border-radius: 12rpx;
+  background: #a981ff;
+  color: #fff;
+  font-size: 19rpx;
+  line-height: 48rpx;
+  text-align: center;
+  font-weight: 900;
+  letter-spacing: 1rpx;
+  transform: rotate(-8deg);
+  box-shadow: 0 10rpx 22rpx rgba(137, 99, 237, 0.22);
+}
+
+.idea-tag::before,
+.idea-tag::after {
+  content: "";
+  position: absolute;
+  width: 18rpx;
+  height: 4rpx;
+  border-radius: 999rpx;
+  background: #a981ff;
+}
+
+.idea-tag::before {
+  top: -12rpx;
+  right: 14rpx;
+  transform: rotate(-42deg);
+}
+
+.idea-tag::after {
+  top: -18rpx;
+  right: 40rpx;
+  transform: rotate(86deg);
+}
+
+.subtitle {
+  display: block;
+  color: #747086;
+  font-size: 27rpx;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.form-card {
+  padding: 0;
+  border-radius: 34rpx;
+  background: transparent;
+}
+
+.mixed-box {
+  position: relative;
+  min-height: 420rpx;
+  padding: 28rpx 26rpx 24rpx;
+  border: 2rpx solid rgba(146, 108, 255, 0.09);
+  border-radius: 22rpx;
+  background: rgba(255, 255, 255, 0.68);
+  overflow: hidden;
+  box-shadow:
+    inset 0 0 0 1rpx rgba(255, 255, 255, 0.9),
+    0 24rpx 60rpx rgba(91, 72, 154, 0.11);
+}
+
+.textarea {
+  width: 100%;
+  min-height: 238rpx;
+  padding: 0;
+  color: #1b1830;
+  font-size: 29rpx;
+  line-height: 1.6;
+  font-weight: 600;
+}
+
+.textarea-placeholder {
+  color: #9290a0;
+  font-weight: 600;
+}
+
+.media-row {
+  margin-top: 20rpx;
+}
+
+.camera-entry {
+  width: 116rpx;
+  height: 116rpx;
+  margin-top: 20rpx;
+  border-radius: 20rpx;
+  background: #eeeeee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.camera-icon {
+  width: 46rpx;
+  height: 46rpx;
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14rpx;
+}
+
+.preview-item {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18rpx;
+  background: #fff;
+  height: 0;
+  padding-bottom: 100%;
+}
+
+.preview {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 18rpx;
+}
+
+.remove-image {
+  position: absolute;
+  top: 10rpx;
+  right: 10rpx;
+  width: 38rpx;
+  height: 38rpx;
+  border-radius: 50%;
+  background: rgba(22, 18, 38, 0.58);
+  color: #fff;
+  font-size: 28rpx;
+  line-height: 36rpx;
+  text-align: center;
+  font-weight: 700;
+}
+
+.upload.small {
+  position: relative;
+  height: 0;
+  padding-bottom: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 18rpx;
+  background: #eeeeee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload.small .camera-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.tag-panel {
+  margin-top: 22rpx;
+}
+
+.tag-title {
+  display: block;
+  color: #6f6880;
+  font-size: 24rpx;
+  font-weight: 800;
+  margin-bottom: 14rpx;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+.tag-chip {
+  min-height: 52rpx;
+  padding: 0 22rpx;
+  border-radius: 999rpx;
+  background: #f2edf9;
+  color: #4d4760;
+  font-size: 24rpx;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tag-chip.active {
+  background: #c7ff33;
+  color: #141126;
+}
+
+.tag-chip.custom {
+  border: 2rpx dashed rgba(117, 84, 226, 0.34);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.tag-chip.custom.active {
+  border-color: transparent;
+  background: #c7ff33;
+}
+
+.tag-chip.removable {
+  max-width: 260rpx;
+  gap: 8rpx;
+  padding-right: 10rpx;
+}
+
+.tag-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-delete {
+  flex: 0 0 auto;
+  width: 34rpx;
+  height: 34rpx;
+  border-radius: 50%;
+  background: rgba(36, 30, 58, 0.12);
+  color: #4d4760;
+  font-size: 24rpx;
+  line-height: 32rpx;
+  text-align: center;
+  font-weight: 900;
+}
+
+.tag-chip.active .tag-delete {
+  background: rgba(20, 17, 38, 0.16);
+  color: #141126;
+}
+
+.custom-tag-input {
+  width: 100%;
+  height: 72rpx;
+  margin-top: 16rpx;
+  padding: 0 24rpx;
+  border-radius: 18rpx;
+  background: #f7f3ff;
+  color: #1b1830;
+  font-size: 26rpx;
+  font-weight: 700;
+  box-sizing: border-box;
+}
+
+.save-wrap {
+  width: 100%;
+  margin-top: 52rpx;
+}
+
+.save {
+  display: flex;
+  width: 100%;
+  min-height: 112rpx;
+  margin: 0;
+  border-radius: 999rpx;
+  background: linear-gradient(135deg, #a981ff, #7554e2);
+  color: #fff;
+  font-size: 36rpx;
+  font-weight: 900;
+  box-shadow: 0 22rpx 42rpx rgba(117, 84, 226, 0.28);
+}

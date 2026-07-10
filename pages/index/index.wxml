@@ -1,0 +1,229 @@
+<view class="page">
+  <view class="hero">
+    <image class="hero-bg" src="/assets/hero-header.png" mode="aspectFill" />
+    <view class="hero-copy">
+      <view class="hero-brand-row">
+        <image class="hero-logo" src="/assets/logo.png" mode="widthFix" />
+        <text class="fan-badge">FAN</text>
+      </view>
+      <text class="hero-subtitle">挖到喜欢的文字、好看的图</text>
+      <text class="hero-subtitle">赶紧揣兜自留</text>
+    </view>
+  </view>
+
+  <view class="sticky-search {{isSearchFloating ? 'floating' : ''}} {{isAndroid ? 'android' : ''}}" style="{{isSearchFloating ? floatingSearchStyle : ''}}">
+    <view class="sticky-brand" style="{{isSearchFloating ? floatingLogoStyle : ''}}">
+      <image class="sticky-logo" src="/assets/logo.png" mode="widthFix" />
+      <text class="sticky-fan-badge">FAN</text>
+    </view>
+    <view class="search-pill">
+      <input
+        class="search-input"
+        value="{{keyword}}"
+        placeholder="输入关键词，打捞心仪图文"
+        confirm-type="search"
+        bindinput="onSearchInput"
+      />
+      <view class="search-button" bindtap="onSearchButtonTap">
+        <image wx:if="{{!keyword}}" class="search-button-icon" src="/assets/search.svg" mode="aspectFit" />
+        <text wx:else class="search-clear">×</text>
+      </view>
+    </view>
+  </view>
+
+  <scroll-view class="filters" scroll-x enable-flex>
+    <view class="filter-track">
+      <block wx:for="{{filters}}" wx:key="key">
+        <view
+          class="filter-chip {{activeType === item.key ? 'active' : ''}}"
+          data-type="{{item.key}}"
+          bindtap="onFilterTap"
+        >
+          <text>{{item.label}}</text>
+        </view>
+      </block>
+    </view>
+  </scroll-view>
+
+  <view wx:if="{{items.length}}" class="masonry">
+    <view class="column">
+      <block wx:for="{{leftItems}}" wx:key="id">
+        <view class="inspiration-card {{item.isImageCard ? 'image-card' : 'text-card'}}" bindtap="openDetail" data-id="{{item.id}}">
+          <view wx:if="{{item.isImageCard && item.images.length}}" class="card-image-wrap">
+            <image
+              class="card-image"
+              src="{{item.images[0]}}"
+              mode="aspectFill"
+              lazy-load
+              data-id="{{item.id}}"
+              data-src="{{item.images[0]}}"
+              binderror="onStoredImageError"
+            />
+            <text wx:if="{{item.isPinned}}" class="image-pin-badge">置顶</text>
+            <text wx:if="{{item.images.length > 1}}" class="image-count">{{item.images.length}}</text>
+          </view>
+          <view wx:elif="{{item.isImageCard}}" class="image-placeholder {{item.imageTone}}">
+            <text wx:if="{{item.isPinned}}" class="image-pin-badge">置顶</text>
+          </view>
+          <view class="card-body">
+            <view class="card-tags">
+              <text wx:if="{{!(item.isImageCard && item.isPinned)}}" class="badge {{item.isUsed ? 'used' : ''}}">{{item.statusText}}</text>
+              <text wx:if="{{item.imageTag}}" class="image-tag">{{item.imageTag}}</text>
+            </view>
+            <text wx:if="{{item.content}}" class="quote">{{item.content}}</text>
+            <view class="card-footer">
+              <text class="meta">{{item.createdText}}</text>
+              <text class="more">•••</text>
+            </view>
+          </view>
+          <text wx:if="{{!item.isImageCard && item.isPinned}}" class="star">☆</text>
+        </view>
+      </block>
+    </view>
+    <view class="column">
+      <block wx:for="{{rightItems}}" wx:key="id">
+        <view class="inspiration-card {{item.isImageCard ? 'image-card' : 'text-card'}}" bindtap="openDetail" data-id="{{item.id}}">
+          <view wx:if="{{item.isImageCard && item.images.length}}" class="card-image-wrap">
+            <image
+              class="card-image"
+              src="{{item.images[0]}}"
+              mode="aspectFill"
+              lazy-load
+              data-id="{{item.id}}"
+              data-src="{{item.images[0]}}"
+              binderror="onStoredImageError"
+            />
+            <text wx:if="{{item.isPinned}}" class="image-pin-badge">置顶</text>
+            <text wx:if="{{item.images.length > 1}}" class="image-count">{{item.images.length}}</text>
+          </view>
+          <view wx:elif="{{item.isImageCard}}" class="image-placeholder {{item.imageTone}}">
+            <text wx:if="{{item.isPinned}}" class="image-pin-badge">置顶</text>
+          </view>
+          <view class="card-body">
+            <view class="card-tags">
+              <text wx:if="{{!(item.isImageCard && item.isPinned)}}" class="badge {{item.isUsed ? 'used' : ''}}">{{item.statusText}}</text>
+              <text wx:if="{{item.imageTag}}" class="image-tag">{{item.imageTag}}</text>
+            </view>
+            <text wx:if="{{item.content}}" class="quote">{{item.content}}</text>
+            <view class="card-footer">
+              <text class="meta">{{item.createdText}}</text>
+              <text class="more">•••</text>
+            </view>
+          </view>
+          <text wx:if="{{!item.isImageCard && item.isPinned}}" class="star">☆</text>
+        </view>
+      </block>
+    </view>
+  </view>
+
+  <view wx:elif="{{keyword || activeType !== 'all'}}" class="empty-state search-empty">
+    <image class="empty-image" src="/assets/empty-box.png" mode="aspectFit" />
+    <text class="empty-title">没找到这条灵感</text>
+    <text class="empty-desc">换个词试试，也许它藏在别的句子里。</text>
+  </view>
+
+  <view wx:else class="empty-state">
+    <image class="empty-image" src="/assets/empty-box.png" mode="aspectFit" />
+    <text class="empty-title">脑袋还空着</text>
+    <text class="empty-desc">刷到喜欢的词句、图片，就先存起来。</text>
+    <button class="primary" bindtap="goAdd">记一条灵感</button>
+  </view>
+
+  <view wx:if="{{items.length || keyword || activeType !== 'all'}}" class="fab-add" bindtap="goAdd" aria-label="新增灵感">
+    <text class="fab-plus">+</text>
+  </view>
+
+  <view wx:if="{{selectedItem}}" class="sheet-mask" bindtap="closeDetail">
+    <view class="detail-sheet" catchtap="noop">
+      <view class="sheet-handle"></view>
+      <swiper
+        wx:if="{{selectedItem.images.length}}"
+        class="sheet-swiper"
+        indicator-dots="{{selectedItem.images.length > 1}}"
+        circular="{{selectedItem.images.length > 1}}"
+      >
+        <block wx:for="{{selectedItem.images}}" wx:key="*this">
+          <swiper-item>
+            <image
+              class="sheet-slide-image"
+              src="{{item}}"
+              mode="aspectFill"
+              lazy-load
+              data-id="{{selectedItem.id}}"
+              data-src="{{item}}"
+              bindtap="previewSelectedImage"
+              binderror="onStoredImageError"
+            />
+          </swiper-item>
+        </block>
+      </swiper>
+      <view wx:elif="{{selectedItem.isImageCard}}" class="sheet-image image-placeholder {{selectedItem.imageTone}}">
+      </view>
+      <view class="sheet-head">
+        <text class="badge {{selectedItem.isUsed ? 'used' : ''}}">{{selectedItem.statusText}}</text>
+      </view>
+      <view class="sheet-content">
+        <textarea
+          wx:if="{{isEditing}}"
+          class="edit-area"
+          value="{{editContent}}"
+          maxlength="-1"
+          bindinput="onEditInput"
+        />
+        <text wx:else class="sheet-quote">{{selectedItem.content || "这条灵感是一张图片"}}</text>
+        <view wx:if="{{isEditing}}" class="edit-image-grid">
+          <block wx:for="{{editImages}}" wx:key="*this">
+            <view class="edit-image-item">
+              <image
+                class="edit-image-preview"
+                src="{{item}}"
+                mode="aspectFill"
+                lazy-load
+                data-src="{{item}}"
+                binderror="onEditImageError"
+              />
+              <view class="edit-image-remove" data-index="{{index}}" catchtap="removeEditImage">×</view>
+            </view>
+          </block>
+          <view wx:if="{{editImages.length < 9}}" class="edit-image-add" bindtap="chooseEditImage">
+            <text>＋</text>
+          </view>
+        </view>
+        <view wx:if="{{isEditing && editImages.length}}" class="edit-tag-panel">
+          <text class="edit-tag-title">图片标签</text>
+          <view class="edit-tag-list">
+            <block wx:for="{{imageTags}}" wx:key="*this">
+              <view
+                class="edit-tag-chip {{editImageTag === item ? 'active' : ''}}"
+                data-tag="{{item}}"
+                bindtap="selectEditImageTag"
+              >
+                {{item}}
+              </view>
+            </block>
+          </view>
+        </view>
+        <text class="sheet-time">{{selectedItem.createdText}}</text>
+      </view>
+      <view wx:if="{{isEditing}}" class="sheet-actions two">
+        <view class="sheet-action ghost" bindtap="cancelEdit">取消</view>
+        <view class="sheet-action primary-action" bindtap="saveEdit">保存</view>
+      </view>
+      <view wx:else class="sheet-actions">
+        <view class="sheet-action icon-action" bindtap="copySelected" aria-label="复制">
+          <image class="sheet-action-icon" src="/assets/icon-copy.svg" mode="aspectFit" />
+        </view>
+        <view class="sheet-action icon-action" bindtap="startEdit" aria-label="编辑">
+          <image class="sheet-action-icon" src="/assets/icon-edit.svg" mode="aspectFit" />
+        </view>
+        <view class="sheet-action icon-action" bindtap="togglePinnedSelected" aria-label="{{selectedItem.isPinned ? '取消置顶' : '置顶'}}">
+          <image class="sheet-action-icon" src="/assets/icon-pin.svg" mode="aspectFit" />
+        </view>
+        <view class="sheet-action icon-action" bindtap="toggleUsedSelected" aria-label="{{selectedItem.isUsed ? '改回待用' : '用过了'}}">{{selectedItem.isUsed ? "↺" : "✓"}}</view>
+        <view class="sheet-action icon-action danger" bindtap="confirmDeleteSelected" aria-label="删除">
+          <image class="sheet-action-icon" src="/assets/icon-delete.svg" mode="aspectFit" />
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

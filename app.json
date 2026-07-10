@@ -1,0 +1,16 @@
+{
+  "entryPagePath": "pages/index/index",
+  "pages": [
+    "pages/index/index",
+    "pages/add/add"
+  ],
+  "window": {
+    "navigationBarTitleText": "灵感脑袋",
+    "navigationBarBackgroundColor": "#F6F5F2",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F6F5F2"
+  },
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents",
+  "sitemapLocation": "sitemap.json"
+}

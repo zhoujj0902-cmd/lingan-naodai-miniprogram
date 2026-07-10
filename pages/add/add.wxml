@@ -1,0 +1,82 @@
+<view class="page">
+  <view class="hero">
+    <view class="title-row">
+      <text class="title">新灵感</text>
+      <view class="idea-tag">IDEA</view>
+    </view>
+    <text class="subtitle">记录闪现的灵感，让热爱被看见</text>
+  </view>
+
+  <view class="form-card">
+    <view class="mixed-box">
+      <textarea
+        class="textarea"
+        value="{{content}}"
+        placeholder="写下你刚刚喜欢的那句话"
+        placeholder-class="textarea-placeholder"
+        maxlength="500"
+        bindinput="onContentInput"
+      />
+      <view wx:if="{{images.length}}" class="media-row">
+        <view class="preview-grid">
+          <block wx:for="{{images}}" wx:key="*this">
+            <view class="preview-item">
+              <image class="preview" src="{{item}}" mode="aspectFill" lazy-load />
+              <view class="remove-image" data-index="{{index}}" catchtap="removeImage">×</view>
+            </view>
+          </block>
+          <view wx:if="{{images.length < 9}}" class="upload small" bindtap="chooseImage">
+            <image class="camera-icon" src="/assets/camera.svg" mode="aspectFit" />
+          </view>
+        </view>
+        <view class="tag-panel">
+          <text class="tag-title">图片标签</text>
+          <view class="tag-list">
+            <block wx:for="{{imageTags}}" wx:key="*this">
+              <view
+                class="tag-chip removable {{selectedImageTag === item ? 'active' : ''}}"
+                data-tag="{{item}}"
+                bindtap="selectImageTag"
+              >
+                <text class="tag-chip-text">{{item}}</text>
+                <text class="tag-delete" data-tag="{{item}}" catchtap="removeImageTag">×</text>
+              </view>
+            </block>
+            <block wx:for="{{customImageTags}}" wx:key="*this">
+              <view
+                class="tag-chip removable saved-custom {{selectedImageTag === item ? 'active' : ''}}"
+                data-tag="{{item}}"
+                bindtap="selectImageTag"
+              >
+                <text class="tag-chip-text">{{item}}</text>
+                <text class="tag-delete" data-tag="{{item}}" catchtap="removeImageTag">×</text>
+              </view>
+            </block>
+            <view
+              class="tag-chip custom {{isCustomImageTag ? 'active' : ''}}"
+              data-tag="__custom__"
+              bindtap="selectImageTag"
+            >
+              自定义
+            </view>
+          </view>
+          <input
+            wx:if="{{isCustomImageTag}}"
+            class="custom-tag-input"
+            value="{{customImageTag}}"
+            maxlength="8"
+            placeholder="输入标签名"
+            bindinput="onCustomImageTagInput"
+          />
+        </view>
+      </view>
+      <view wx:else class="camera-entry" bindtap="chooseImage">
+        <image class="camera-icon" src="/assets/camera.svg" mode="aspectFit" />
+      </view>
+    </view>
+  </view>
+
+  <view class="save-wrap">
+    <view class="primary save" bindtap="save">塞进脑袋</view>
+  </view>
+</view>

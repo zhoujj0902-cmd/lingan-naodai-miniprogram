@@ -1,0 +1,127 @@
+page {
+  min-height: 100%;
+  background: #f6f1ff;
+  color: #171425;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+view,
+text,
+input,
+textarea,
+button,
+image {
+  box-sizing: border-box;
+}
+
+button {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  line-height: 1;
+}
+
+button::after {
+  border: 0;
+}
+
+.page {
+  padding: 24rpx 32rpx calc(48rpx + env(safe-area-inset-bottom));
+}
+
+.search {
+  height: 84rpx;
+  border-radius: 16rpx;
+  background: #fff;
+  border: 1rpx solid #e8e2d8;
+  padding: 0 24rpx;
+  display: flex;
+  align-items: center;
+  color: #74706a;
+  font-size: 28rpx;
+}
+
+.card {
+  background: #fff;
+  border: 1rpx solid #e8e2d8;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 20rpx;
+  box-shadow: 0 10rpx 24rpx rgba(52, 47, 41, 0.04);
+}
+
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 14rpx;
+}
+
+.meta {
+  color: #74706a;
+  font-size: 23rpx;
+}
+
+.badge {
+  border-radius: 999rpx;
+  padding: 8rpx 16rpx;
+  background: #edf4ef;
+  color: #226a5b;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.badge.used {
+  background: #f0eee9;
+  color: #8b8174;
+}
+
+.quote {
+  font-size: 31rpx;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.note {
+  color: #74706a;
+  font-size: 24rpx;
+  line-height: 1.5;
+  margin-top: 12rpx;
+}
+
+.primary {
+  min-height: 92rpx;
+  border-radius: 999rpx;
+  background: linear-gradient(135deg, #a981ff, #7554e2);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32rpx;
+  font-weight: 800;
+}
+
+.secondary {
+  min-height: 84rpx;
+  border-radius: 16rpx;
+  background: #fff;
+  color: #202124;
+  border: 1rpx solid #e8e2d8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.section-title {
+  font-size: 32rpx;
+  font-weight: 800;
+  margin: 30rpx 0 18rpx;
+}
+
+.muted {
+  color: #74706a;
+}
