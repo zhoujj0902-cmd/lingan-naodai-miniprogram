@@ -2,6 +2,8 @@ const MAX_IMAGE_SIZE = 500 * 1024;
 const MAX_COMPRESS_ATTEMPTS = 5;
 const FALLBACK_QUALITIES = [75, 55, 35, 20, 10];
 const MAX_CONCURRENT_PREPARE = 2;
+const THUMBNAIL_MAX_EDGE = 360;
+const THUMBNAIL_QUALITY = 72;
 const fingerprintCache = {};
 
 function isCloudFile(filePath) {
@@ -133,6 +135,22 @@ function getImageInfo(filePath) {
 
 async function compressImageToLimit(filePath) {
   return compressImageToSize(filePath, MAX_IMAGE_SIZE);
+}
+
+async function createImageThumbnail(filePath) {
+  if (!filePath || isCloudFile(filePath)) return "";
+  const imageInfo = await getImageInfo(filePath);
+  if (!imageInfo.width || !imageInfo.height) return "";
+  const scale = Math.min(
+    1,
+    THUMBNAIL_MAX_EDGE / Math.max(imageInfo.width, imageInfo.height)
+  );
+  return compressImageWithSize(
+    filePath,
+    THUMBNAIL_QUALITY,
+    imageInfo.width * scale,
+    imageInfo.height * scale
+  );
 }
 
 async function compressImageToSize(filePath, maxSize) {
@@ -300,6 +318,7 @@ module.exports = {
   MAX_IMAGE_SIZE,
   compressImageToLimit,
   compressImageToSize,
+  createImageThumbnail,
   getImageFingerprint,
   getImageFingerprints,
   getPrepareImagesErrorMessage,

@@ -146,11 +146,15 @@ Page({
       this.setData({
         hasMoreCloudItems: Boolean(result.hasMore),
         syncStatusText: "已同步",
-        syncStatusType: "synced"
+        syncStatusType: "synced",
+        imageTags: buildSelectableImageTags(this.data.editImageTag)
       });
       if (result.migratedCount) {
         wx.showToast({ title: "旧数据已同步到云端", icon: "success" });
       }
+      cloudStore.backfillMissingThumbnails(result.items, 4).then((updatedCount) => {
+        if (updatedCount) this.loadItems();
+      });
       this.hasShownCloudSyncError = false;
     } catch (error) {
       console.error("sync inspirations from cloud failed", error);
@@ -208,6 +212,9 @@ Page({
     try {
       const result = await cloudStore.loadNextPage();
       this.loadItems();
+      cloudStore.backfillMissingThumbnails(result.items, 4).then((updatedCount) => {
+        if (updatedCount) this.loadItems();
+      });
       this.setData({
         hasMoreCloudItems: Boolean(result.hasMore),
         syncStatusText: result.hasMore ? "已同步" : "已加载全部",
@@ -360,14 +367,21 @@ Page({
         }
         return hasImages && normalizeImageTag(item.imageTag) === activeType;
       })
-      .map((item) => ({
-        ...item,
-        createdText: store.formatDate(item.createdAt),
-        statusText: item.isPinned ? "置顶" : item.isUsed ? "用过了" : "待用",
-        imageTag: normalizeImageTag(item.imageTag),
-        images: item.images || [],
-        isImageCard: item.type === "image" || (item.images || []).length > 0
-      }));
+      .map((item) => {
+        const images = item.images || [];
+        const thumbnails = item.thumbnails || images;
+        const useOriginal = this.thumbnailFallbackIds && this.thumbnailFallbackIds.has(item.id);
+        return {
+          ...item,
+          createdText: store.formatDate(item.createdAt),
+          statusText: item.isPinned ? "置顶" : item.isUsed ? "用过了" : "待用",
+          imageTag: normalizeImageTag(item.imageTag),
+          images,
+          thumbnails,
+          cardImage: useOriginal ? images[0] : thumbnails[0] || images[0],
+          isImageCard: item.type === "image" || images.length > 0
+        };
+      });
     const { leftItems, rightItems } = splitMasonryColumns(items);
     const nextData = {
       items,
@@ -407,6 +421,7 @@ Page({
       statusText: item.isPinned ? "置顶" : item.isUsed ? "用过了" : "待用",
       imageTag: normalizeImageTag(item.imageTag),
       images: item.images || [],
+      thumbnails: item.thumbnails || item.images || [],
       isImageCard: item.type === "image" || (item.images || []).length > 0
     };
   },
@@ -510,6 +525,9 @@ Page({
         );
         if (this.data.editImages.length && this.data.editImageTag) {
           tagStore.add(this.data.editImageTag);
+          cloudStore.syncTagSettings().catch((error) => {
+            console.warn("sync edited image tag failed", error);
+          });
         }
         this.refreshSelected(item.id);
         toast = { title: "已更新", icon: "success" };
@@ -522,6 +540,10 @@ Page({
         toast = { title: "这段文案已经在脑袋里", icon: "none" };
       } else if (error.code === "DUPLICATE_IMAGE") {
         toast = { title: "图片已经在脑袋里", icon: "none" };
+      } else if (error.code === "UNSAFE_TEXT") {
+        toast = { title: "文案未通过安全检测", icon: "none" };
+      } else if (error.code === "TEXT_CHECK_ERROR") {
+        toast = { title: "文案检测暂时失败", icon: "none" };
       } else {
         toast = { title: "云端更新失败，请稍后重试", icon: "none" };
       }
@@ -672,6 +694,23 @@ Page({
       }
     }
     this.loadItems();
+  },
+
+  onCardImageError(event) {
+    const id = event.currentTarget.dataset.id;
+    const raw = id && store.getById(id);
+    if (!raw || !(raw.images || []).length) return;
+    const originalImage = raw.images[0];
+    const thumbnail = (raw.thumbnails || [])[0];
+    if (thumbnail && thumbnail !== originalImage) {
+      if (!this.thumbnailFallbackIds) this.thumbnailFallbackIds = new Set();
+      this.thumbnailFallbackIds.add(id);
+      this.loadItems();
+      return;
+    }
+    this.onStoredImageError({
+      currentTarget: { dataset: { id, src: originalImage } }
+    });
   },
 
   onEditImageError(event) {

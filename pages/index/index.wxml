@@ -57,12 +57,11 @@
           <view wx:if="{{item.isImageCard && item.images.length}}" class="card-image-wrap">
             <image
               class="card-image"
-              src="{{item.images[0]}}"
+              src="{{item.cardImage}}"
               mode="aspectFill"
               lazy-load
               data-id="{{item.id}}"
-              data-src="{{item.images[0]}}"
-              binderror="onStoredImageError"
+              binderror="onCardImageError"
             />
             <text wx:if="{{item.isPinned}}" class="image-pin-badge">置顶</text>
             <text wx:if="{{item.images.length > 1}}" class="image-count">{{item.images.length}}</text>
@@ -91,12 +90,11 @@
           <view wx:if="{{item.isImageCard && item.images.length}}" class="card-image-wrap">
             <image
               class="card-image"
-              src="{{item.images[0]}}"
+              src="{{item.cardImage}}"
               mode="aspectFill"
               lazy-load
               data-id="{{item.id}}"
-              data-src="{{item.images[0]}}"
-              binderror="onStoredImageError"
+              binderror="onCardImageError"
             />
             <text wx:if="{{item.isPinned}}" class="image-pin-badge">置顶</text>
             <text wx:if="{{item.images.length > 1}}" class="image-count">{{item.images.length}}</text>

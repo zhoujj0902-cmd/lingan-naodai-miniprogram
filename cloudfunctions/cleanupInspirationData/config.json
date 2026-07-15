@@ -1,0 +1,10 @@
+{
+  "timeout": 60,
+  "triggers": [
+    {
+      "name": "cleanupDaily",
+      "type": "timer",
+      "config": "0 0 3 * * * *"
+    }
+  ]
+}

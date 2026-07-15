@@ -40,6 +40,11 @@ function normalizeItem(item) {
   return {
     ...item,
     images,
+    thumbnails: images.length
+      ? activeImageIndexes.map(
+        ({ index, path }) => (item.thumbnails || [])[index] || path
+      )
+      : [],
     imageFingerprints: images.length
       ? activeImageIndexes.map(({ index }) => (item.imageFingerprints || [])[index] || "")
       : [],
@@ -162,6 +167,7 @@ function add(data) {
     id: data.id || `inspiration-${now}-${Math.random().toString(16).slice(2, 8)}`,
     content: data.content || "",
     images: data.images || [],
+    thumbnails: data.thumbnails || data.images || [],
     imageFingerprints: data.imageFingerprints || [],
     imageTag: data.imageTag || "",
     type: data.images && data.images.length ? "image" : "sentence",
@@ -223,11 +229,13 @@ function removeImage(id, imagePath) {
   if (!item) return null;
   const imageIndex = (item.images || []).findIndex((path) => path === imagePath);
   const images = (item.images || []).filter((path) => path !== imagePath);
+  const thumbnails = (item.thumbnails || []).filter((_, index) => index !== imageIndex);
   const imageFingerprints = (item.imageFingerprints || []).filter(
     (_, index) => index !== imageIndex
   );
   return update(id, {
     images,
+    thumbnails,
     imageFingerprints,
     imageTag: images.length ? item.imageTag || "" : "",
     type: images.length ? "image" : item.type === "image" ? "sentence" : item.type

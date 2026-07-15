@@ -1,13 +1,16 @@
 const imageUtils = require("./image");
 const security = require("./security");
 const store = require("./store");
+const tagStore = require("./tagStore");
 
 const FUNCTION_NAME = "inspirationData";
 const MIGRATION_VERSION = 1;
 const PAGINATION_VERSION = 2;
 const PAGE_SIZE = 30;
 const MAX_CONCURRENT_UPLOADS = 2;
+const TAG_MIGRATION_VERSION = 1;
 let sessionPromise = null;
+let thumbnailBackfillPromise = null;
 
 function createId() {
   return `inspiration-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -32,6 +35,10 @@ function getFingerprintSuffix(fingerprint) {
 
 function getMigrationKey(openid) {
   return `cloudMigrationV${MIGRATION_VERSION}:${openid}`;
+}
+
+function getTagMigrationKey(openid) {
+  return `cloudTagMigrationV${TAG_MIGRATION_VERSION}:${openid}`;
 }
 
 function callDataFunction(action, data = {}) {
@@ -85,6 +92,20 @@ function uploadFile(cloudPath, filePath) {
   });
 }
 
+function downloadFile(fileID) {
+  return new Promise((resolve) => {
+    if (!wx.cloud || !wx.cloud.downloadFile) {
+      resolve("");
+      return;
+    }
+    wx.cloud.downloadFile({
+      fileID,
+      success: (res) => resolve(res.tempFilePath || ""),
+      fail: () => resolve("")
+    });
+  });
+}
+
 function deleteCloudFiles(fileIDs) {
   const cloudFiles = [...new Set((fileIDs || []).filter(imageUtils.isCloudFile))];
   if (!cloudFiles.length || !wx.cloud || !wx.cloud.deleteFile) return Promise.resolve();
@@ -96,10 +117,11 @@ function deleteCloudFiles(fileIDs) {
   });
 }
 
-async function uploadImages(images, itemId, imageFingerprints) {
+async function uploadImages(images, itemId, imageFingerprints, existingThumbnails = []) {
   const session = await activateSession();
   const sourceImages = (images || []).filter(Boolean);
   const result = new Array(sourceImages.length);
+  const thumbnails = new Array(sourceImages.length);
   const uploadedFileIDs = [];
   let nextIndex = 0;
   let firstError = null;
@@ -111,19 +133,48 @@ async function uploadImages(images, itemId, imageFingerprints) {
       const image = sourceImages[index];
       if (imageUtils.isCloudFile(image)) {
         result[index] = image;
+        thumbnails[index] = imageUtils.isCloudFile(existingThumbnails[index])
+          ? existingThumbnails[index]
+          : image;
         continue;
       }
       try {
+        const pathPrefix = `${String(index).padStart(2, "0")}-${getFingerprintSuffix(imageFingerprints[index])}`;
         const cloudPath = [
           "users",
           safePathPart(session.openid),
           "inspirations",
           safePathPart(itemId),
-          `${String(index).padStart(2, "0")}-${getFingerprintSuffix(imageFingerprints[index])}.${getFileExt(image)}`
+          `${pathPrefix}.${getFileExt(image)}`
         ].join("/");
         const fileID = await uploadFile(cloudPath, image);
         result[index] = fileID;
         uploadedFileIDs.push(fileID);
+        let thumbnailPath = "";
+        try {
+          thumbnailPath = await imageUtils.createImageThumbnail(image);
+        } catch (error) {
+          console.warn("thumbnail generation failed, use original image", error);
+        }
+        if (thumbnailPath) {
+          try {
+            const thumbnailCloudPath = [
+              "users",
+              safePathPart(session.openid),
+              "inspirations",
+              safePathPart(itemId),
+              `${pathPrefix}-thumb.jpg`
+            ].join("/");
+            const thumbnailFileID = await uploadFile(thumbnailCloudPath, thumbnailPath);
+            thumbnails[index] = thumbnailFileID;
+            uploadedFileIDs.push(thumbnailFileID);
+          } catch (error) {
+            console.warn("thumbnail upload failed, use original image", error);
+            thumbnails[index] = fileID;
+          }
+        } else {
+          thumbnails[index] = fileID;
+        }
       } catch (error) {
         firstError = error;
       }
@@ -134,7 +185,7 @@ async function uploadImages(images, itemId, imageFingerprints) {
     await deleteCloudFiles(uploadedFileIDs);
     throw firstError;
   }
-  return { images: result, uploadedFileIDs };
+  return { images: result, thumbnails, uploadedFileIDs };
 }
 
 function removeLocalFiles(images) {
@@ -142,12 +193,13 @@ function removeLocalFiles(images) {
   return Promise.all(localFiles.map(imageUtils.removeSavedImage));
 }
 
-function buildItem(data, id, images) {
+function buildItem(data, id, images, thumbnails) {
   const now = Date.now();
   return {
     id,
     content: data.content || "",
     images: images || [],
+    thumbnails: thumbnails || images || [],
     imageFingerprints: data.imageFingerprints || [],
     imageTag: data.imageTag || "",
     type: images && images.length ? "image" : "sentence",
@@ -176,7 +228,7 @@ async function createItem(data, options = {}) {
   const id = data.id || createId();
   const localImages = data.images || [];
   const uploadResult = await uploadImages(localImages, id, data.imageFingerprints || []);
-  const item = buildItem(data, id, uploadResult.images);
+  const item = buildItem(data, id, uploadResult.images, uploadResult.thumbnails);
   let savedItem;
   try {
     savedItem = await callDataFunction(options.isMigration ? "import" : "upsert", { item });
@@ -196,10 +248,25 @@ async function createItem(data, options = {}) {
 
 async function updateItem(item, patch, editImages, imageFingerprints, options = {}) {
   const sourceImages = editImages || item.images || [];
-  const uploadResult = await uploadImages(sourceImages, item.id, imageFingerprints || []);
+  const thumbnailByImage = new Map(
+    (item.images || []).map((image, index) => [
+      image,
+      (item.thumbnails || [])[index] || image
+    ])
+  );
+  const existingThumbnails = sourceImages.map(
+    (image) => thumbnailByImage.get(image) || ""
+  );
+  const uploadResult = await uploadImages(
+    sourceImages,
+    item.id,
+    imageFingerprints || [],
+    existingThumbnails
+  );
   const nextPatch = {
     ...patch,
     images: uploadResult.images,
+    thumbnails: uploadResult.thumbnails,
     imageFingerprints: imageFingerprints || [],
     type: uploadResult.images.length ? "image" : "sentence"
   };
@@ -250,6 +317,81 @@ async function updateFields(id, patch) {
     }
     throw error;
   }
+}
+
+async function backfillItemThumbnails(item) {
+  const images = item.images || [];
+  const currentThumbnails = item.thumbnails || images;
+  const nextThumbnails = [...currentThumbnails];
+  const uploadedFileIDs = [];
+  const session = await activateSession();
+  let hasChanged = false;
+  for (let index = 0; index < images.length; index += 1) {
+    const image = images[index];
+    if (!imageUtils.isCloudFile(image) || (currentThumbnails[index] && currentThumbnails[index] !== image)) {
+      continue;
+    }
+    const downloadedPath = await downloadFile(image);
+    if (!downloadedPath) continue;
+    const thumbnailPath = await imageUtils.createImageThumbnail(downloadedPath);
+    if (!thumbnailPath) continue;
+    try {
+      const cloudPath = [
+        "users",
+        safePathPart(session.openid),
+        "inspirations",
+        safePathPart(item.id),
+        `${String(index).padStart(2, "0")}-backfill-thumb.jpg`
+      ].join("/");
+      const thumbnailFileID = await uploadFile(cloudPath, thumbnailPath);
+      uploadedFileIDs.push(thumbnailFileID);
+      nextThumbnails[index] = thumbnailFileID;
+      hasChanged = true;
+    } catch (error) {
+      console.warn("backfill thumbnail upload failed", error);
+    }
+  }
+  if (!hasChanged) return false;
+  try {
+    const savedItem = await callDataFunction("update", {
+      id: item.id,
+      patch: { thumbnails: nextThumbnails },
+      baseVersion: Number(item.version || 0),
+      baseValues: { thumbnails: currentThumbnails }
+    });
+    store.mergeRemoteItems([savedItem]);
+    return true;
+  } catch (error) {
+    await deleteCloudFiles(uploadedFileIDs);
+    console.warn("backfill thumbnail record update failed", error);
+    return false;
+  }
+}
+
+function backfillMissingThumbnails(items, limit = 4) {
+  if (thumbnailBackfillPromise) return thumbnailBackfillPromise;
+  const candidates = (items || store.getAll())
+    .filter((item) =>
+      (item.images || []).some(
+        (image, index) =>
+          imageUtils.isCloudFile(image) &&
+          (!(item.thumbnails || [])[index] || (item.thumbnails || [])[index] === image)
+      )
+    )
+    .slice(0, Math.max(1, limit));
+  thumbnailBackfillPromise = (async () => {
+    let updatedCount = 0;
+    for (const item of candidates) {
+      if (await backfillItemThumbnails(item)) updatedCount += 1;
+    }
+    return updatedCount;
+  })().catch((error) => {
+    console.warn("thumbnail backfill failed", error);
+    return 0;
+  }).finally(() => {
+    thumbnailBackfillPromise = null;
+  });
+  return thumbnailBackfillPromise;
 }
 
 async function removeItem(item, options = {}) {
@@ -310,6 +452,59 @@ async function listRemoteChanges(since) {
       syncCursor: Date.now(),
       isFullSnapshot: true
     };
+  }
+}
+
+function mergeTagSettings(localState, remoteSettings) {
+  return {
+    customTags: [...new Set([
+      ...(localState.customTags || []),
+      ...(remoteSettings.customTags || [])
+    ])],
+    hiddenDefaultTags: [...new Set([
+      ...(localState.hiddenDefaultTags || []),
+      ...(remoteSettings.hiddenDefaultTags || [])
+    ])]
+  };
+}
+
+async function syncTagSettings() {
+  const session = await activateSession();
+  const localState = tagStore.getSyncState();
+  let remoteSettings;
+  try {
+    remoteSettings = await callDataFunction("getSettings");
+  } catch (error) {
+    if (error.code === "INVALID_ACTION") return { supported: false };
+    throw error;
+  }
+
+  const migrationKey = getTagMigrationKey(session.openid);
+  let nextSettings = remoteSettings;
+  if (!wx.getStorageSync(migrationKey)) {
+    const mergedSettings = mergeTagSettings(localState, remoteSettings || {});
+    nextSettings = await callDataFunction("updateSettings", {
+      settings: mergedSettings
+    });
+    wx.setStorageSync(migrationKey, true);
+  } else if (localState.isDirty) {
+    nextSettings = await callDataFunction("updateSettings", {
+      settings: {
+        customTags: localState.customTags,
+        hiddenDefaultTags: localState.hiddenDefaultTags
+      }
+    });
+  }
+  tagStore.replaceSyncState(nextSettings || {}, localState.dirtyRevision);
+  return { supported: true, settings: nextSettings };
+}
+
+async function syncTagSettingsQuietly() {
+  try {
+    return await syncTagSettings();
+  } catch (error) {
+    console.warn("sync image tags failed", error);
+    return { supported: false, error };
   }
 }
 
@@ -379,6 +574,7 @@ async function syncAll() {
   const legacyItems = store.getLegacyAll();
   const session = await activateSession();
   const migration = await migrateLegacyItems(legacyItems, session);
+  await syncTagSettingsQuietly();
   if (migration.didMigrate) {
     return {
       items: store.getAll(),
@@ -457,6 +653,7 @@ function isConflict(error) {
 }
 
 module.exports = {
+  backfillMissingThumbnails,
   createItem,
   getPreviewUrls,
   getSession,
@@ -465,6 +662,7 @@ module.exports = {
   loadNextPage,
   removeItem,
   syncAll,
+  syncTagSettings,
   updateFields,
   updateItem
 };

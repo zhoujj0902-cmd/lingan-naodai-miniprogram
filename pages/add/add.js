@@ -24,6 +24,9 @@ Page({
 
   onShow() {
     this.loadImageTags();
+    cloudStore.syncTagSettings()
+      .then(() => this.loadImageTags())
+      .catch((error) => console.warn("sync image tags on add page failed", error));
     this.checkClipboard();
   },
 
@@ -126,6 +129,9 @@ Page({
       success: (res) => {
         if (!res.confirm) return;
         tagStore.remove(tag);
+        cloudStore.syncTagSettings().catch((error) => {
+          console.warn("sync removed image tag failed", error);
+        });
         const isSelected = this.data.selectedImageTag === tag;
         this.setData({
           imageTags: tagStore.getDefaultTags(),
@@ -207,6 +213,9 @@ Page({
         });
         if (this.data.isCustomImageTag && imageTag) {
           tagStore.add(imageTag);
+          cloudStore.syncTagSettings().catch((error) => {
+            console.warn("sync custom image tag failed", error);
+          });
         }
         if (this.data.acceptedClipboard) {
           clipboardStore.add(this.data.acceptedClipboard);
@@ -232,6 +241,10 @@ Page({
         toast = { title: "这段文案已经在脑袋里", icon: "none" };
       } else if (error.code === "DUPLICATE_IMAGE") {
         toast = { title: "图片已经在脑袋里", icon: "none" };
+      } else if (error.code === "UNSAFE_TEXT") {
+        toast = { title: "文案未通过安全检测", icon: "none" };
+      } else if (error.code === "TEXT_CHECK_ERROR") {
+        toast = { title: "文案检测暂时失败", icon: "none" };
       } else {
         toast = { title: "云端保存失败，请稍后重试", icon: "none" };
       }

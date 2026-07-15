@@ -10,9 +10,12 @@ const collection = db.collection("inspirations");
 const PAGE_SIZE = 100;
 const DEFAULT_CLIENT_PAGE_SIZE = 30;
 const MAX_CLIENT_PAGE_SIZE = 50;
+const TEXT_CHECK_RETRIES = 2;
+const SETTINGS_TYPE = "settings";
 const EDITABLE_FIELDS = [
   "content",
   "images",
+  "thumbnails",
   "imageFingerprints",
   "imageTag",
   "type",
@@ -53,11 +56,18 @@ function toClientItem(document) {
     id: document.clientId,
     ...item,
     images: Array.isArray(item.images) ? item.images : [],
+    thumbnails: Array.isArray(item.thumbnails)
+      ? item.thumbnails
+      : Array.isArray(item.images) ? item.images : [],
     imageFingerprints: Array.isArray(item.imageFingerprints)
       ? item.imageFingerprints
       : [],
     version: Math.max(1, Number(document.version || 1))
   };
+}
+
+function isInspirationDocument(document) {
+  return document && document.documentType !== SETTINGS_TYPE && document.clientId;
 }
 
 function createError(code, message, data) {
@@ -70,6 +80,43 @@ function createError(code, message, data) {
 function valuesEqual(left, right) {
   if (left === right) return true;
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function assertTextSafe(openid, content) {
+  const text = String(content || "").trim();
+  if (!text) return;
+  let lastError = null;
+  for (let attempt = 0; attempt <= TEXT_CHECK_RETRIES; attempt += 1) {
+    try {
+      const response = await cloud.openapi.security.msgSecCheck({
+        content: text,
+        version: 2,
+        scene: 2,
+        openid
+      });
+      const result = response.result || response;
+      if (result.suggest === "pass") return;
+      throw createError("UNSAFE_TEXT", "文案未通过安全检测");
+    } catch (error) {
+      if (error.code === "UNSAFE_TEXT") throw error;
+      const code = Number(error.errCode || error.errorCode || error.code);
+      if (code === 87014) {
+        throw createError("UNSAFE_TEXT", "文案未通过安全检测");
+      }
+      lastError = error;
+      if (code !== -1 || attempt === TEXT_CHECK_RETRIES) break;
+      await sleep(400);
+    }
+  }
+  console.error("msgSecCheck failed", {
+    code: lastError && (lastError.errCode || lastError.errorCode || lastError.code || ""),
+    message: lastError && (lastError.errMsg || lastError.message || "")
+  });
+  throw createError("TEXT_CHECK_ERROR", "文案安全检测暂时失败");
 }
 
 function isCloudFile(fileID) {
@@ -93,15 +140,20 @@ async function deleteFiles(openid, fileIDs) {
   const files = [
     ...new Set((fileIDs || []).filter((fileID) => isOwnedCloudFile(openid, fileID)))
   ];
-  if (!files.length) return;
+  if (!files.length) return [];
   try {
-    await cloud.deleteFile({ fileList: files });
+    const result = await cloud.deleteFile({ fileList: files });
+    return (result.fileList || [])
+      .filter((item) => Number(item.status) !== 0 && item.status !== "success")
+      .map((item) => item.fileID)
+      .filter(Boolean);
   } catch (error) {
     console.error("delete inspiration files failed", {
       fileCount: files.length,
       code: error.code || error.errCode || "",
       message: error.message || error.errMsg || ""
     });
+    return files;
   }
 }
 
@@ -134,7 +186,7 @@ async function getDocumentsByOwner(openid) {
 async function listItems(openid) {
   const documents = await getDocumentsByOwner(openid);
   return documents
-    .filter((document) => !document.isDeleted)
+    .filter((document) => isInspirationDocument(document) && !document.isDeleted)
     .map(toClientItem)
     .sort((a, b) => {
       if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
@@ -170,14 +222,18 @@ async function listPage(openid, cursor, requestedPageSize) {
         exhausted = true;
         break;
       }
-      activeDocuments.push(...documents.filter((document) => !document.isDeleted));
+      activeDocuments.push(
+        ...documents.filter(
+          (document) => isInspirationDocument(document) && !document.isDeleted
+        )
+      );
       scanCursor = documents[documents.length - 1]._id;
       exhausted = documents.length < pageSize + 1;
     }
   } catch (error) {
     console.warn("paged query fallback", error.message || error.errMsg || error);
     const documents = (await getDocumentsByOwner(openid))
-      .filter((document) => !document.isDeleted)
+      .filter((document) => isInspirationDocument(document) && !document.isDeleted)
       .sort((a, b) => String(b._id).localeCompare(String(a._id)));
     const startIndex = cursor
       ? documents.findIndex((document) => String(document._id) < String(cursor))
@@ -224,7 +280,10 @@ async function listChanges(openid, since) {
       return updatedAt > Number(since || 0) && updatedAt <= syncCursor;
     });
   }
-  return { items: documents.map(toClientItem), syncCursor };
+  return {
+    items: documents.filter(isInspirationDocument).map(toClientItem),
+    syncCursor
+  };
 }
 
 async function assertNoDuplicate(openid, item, excludeId = "") {
@@ -233,7 +292,11 @@ async function assertNoDuplicate(openid, item, excludeId = "") {
   if (!content && !fingerprints.size) return;
   const documents = await getDocumentsByOwner(openid);
   for (const document of documents) {
-    if (document.isDeleted || document.clientId === excludeId) continue;
+    if (
+      !isInspirationDocument(document) ||
+      document.isDeleted ||
+      document.clientId === excludeId
+    ) continue;
     if (content && String(document.content || "").trim() === content) {
       throw createError("DUPLICATE_CONTENT", "这段文案已经在脑袋里");
     }
@@ -255,6 +318,9 @@ async function upsertItem(openid, item, skipDuplicateCheck = false) {
   if (Object.prototype.hasOwnProperty.call(fields, "images")) {
     fields.images = validateImages(openid, fields.images);
   }
+  if (Object.prototype.hasOwnProperty.call(fields, "thumbnails")) {
+    fields.thumbnails = validateImages(openid, fields.thumbnails);
+  }
   const document = {
     ...fields,
     clientId,
@@ -267,6 +333,7 @@ async function upsertItem(openid, item, skipDuplicateCheck = false) {
   if (!skipDuplicateCheck) {
     await assertNoDuplicate(openid, document, clientId);
   }
+  await assertTextSafe(openid, document.content);
   await collection.doc(documentId).set({ data: document });
   return toClientItem({ _id: documentId, ...document });
 }
@@ -301,10 +368,48 @@ async function updateDocumentAtVersion(documentId, openid, document, patch) {
   return !result.stats || Number(result.stats.updated || 0) > 0;
 }
 
+function getDocumentFiles(document) {
+  return [
+    ...(document.images || []),
+    ...(document.thumbnails || []),
+    ...(document.cleanupFileIDs || [])
+  ].filter(isCloudFile);
+}
+
+async function finishQueuedFileCleanup(openid, documentId, fileIDs) {
+  const queuedFiles = [...new Set((fileIDs || []).filter(isCloudFile))];
+  if (!queuedFiles.length) return;
+  try {
+    const failedFiles = await deleteFiles(openid, queuedFiles);
+    const failedSet = new Set(failedFiles);
+    const deletedSet = new Set(
+      queuedFiles.filter((fileID) => !failedSet.has(fileID))
+    );
+    if (!deletedSet.size) return;
+    const latestResult = await collection.doc(documentId).get();
+    const latest = latestResult.data || {};
+    await collection.doc(documentId).update({
+      data: {
+        cleanupFileIDs: (latest.cleanupFileIDs || []).filter(
+          (fileID) => !deletedSet.has(fileID)
+        )
+      }
+    });
+  } catch (error) {
+    console.error("persist inspiration cleanup result failed", {
+      documentId,
+      message: error.message || error.errMsg || ""
+    });
+  }
+}
+
 async function updateItem(openid, id, patch, options = {}) {
   const nextPatch = pickFields(patch || {});
   if (Object.prototype.hasOwnProperty.call(nextPatch, "images")) {
     nextPatch.images = validateImages(openid, nextPatch.images);
+  }
+  if (Object.prototype.hasOwnProperty.call(nextPatch, "thumbnails")) {
+    nextPatch.thumbnails = validateImages(openid, nextPatch.thumbnails);
   }
   const baseVersion = Number(options.baseVersion || 0);
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -320,19 +425,46 @@ async function updateItem(openid, id, patch, options = {}) {
       throwConflict(document);
     }
 
-    const nextDocument = { ...document, ...nextPatch };
+    const effectivePatch = { ...nextPatch };
+    if (
+      Object.prototype.hasOwnProperty.call(effectivePatch, "images") &&
+      !Object.prototype.hasOwnProperty.call(effectivePatch, "thumbnails")
+    ) {
+      effectivePatch.thumbnails = effectivePatch.images.map((image) => {
+        const oldIndex = (document.images || []).indexOf(image);
+        return oldIndex >= 0 ? (document.thumbnails || [])[oldIndex] || image : image;
+      });
+    }
+
+    const nextDocument = { ...document, ...effectivePatch };
     if (
       Object.prototype.hasOwnProperty.call(nextPatch, "content") ||
       Object.prototype.hasOwnProperty.call(nextPatch, "imageFingerprints")
     ) {
       await assertNoDuplicate(openid, nextDocument, id);
     }
+    if (Object.prototype.hasOwnProperty.call(nextPatch, "content")) {
+      await assertTextSafe(openid, nextDocument.content);
+    }
 
     const serverPatch = {
-      ...nextPatch,
+      ...effectivePatch,
       updatedAt: Date.now(),
       version: currentVersion + 1
     };
+    const nextFiles = new Set([
+      ...(nextDocument.images || []),
+      ...(nextDocument.thumbnails || [])
+    ]);
+    const removedFiles = getDocumentFiles(document).filter(
+      (fileID) => !nextFiles.has(fileID)
+    );
+    if (removedFiles.length) {
+      serverPatch.cleanupFileIDs = [...new Set([
+        ...(document.cleanupFileIDs || []),
+        ...removedFiles
+      ])];
+    }
     const hasUpdated = await updateDocumentAtVersion(
       documentId,
       openid,
@@ -340,12 +472,12 @@ async function updateItem(openid, id, patch, options = {}) {
       serverPatch
     );
     if (!hasUpdated) continue;
-    if (Object.prototype.hasOwnProperty.call(serverPatch, "images")) {
-      const nextImages = new Set(serverPatch.images || []);
-      const removedImages = (document.images || []).filter(
-        (fileID) => isCloudFile(fileID) && !nextImages.has(fileID)
+    if (serverPatch.cleanupFileIDs && serverPatch.cleanupFileIDs.length) {
+      await finishQueuedFileCleanup(
+        openid,
+        documentId,
+        serverPatch.cleanupFileIDs
       );
-      await deleteFiles(openid, removedImages);
     }
     return toClientItem({ ...document, ...serverPatch });
   }
@@ -364,7 +496,9 @@ async function removeItem(openid, id, options = {}) {
     const tombstone = {
       isDeleted: true,
       images: [],
+      thumbnails: [],
       imageFingerprints: [],
+      cleanupFileIDs: [...new Set(getDocumentFiles(document))],
       updatedAt: Date.now(),
       version: currentVersion + 1
     };
@@ -375,11 +509,68 @@ async function removeItem(openid, id, options = {}) {
       tombstone
     );
     if (!hasUpdated) continue;
-    await deleteFiles(openid, document.images || []);
+    await finishQueuedFileCleanup(
+      openid,
+      documentId,
+      tombstone.cleanupFileIDs
+    );
     return toClientItem({ ...document, ...tombstone });
   }
   const { document } = await getOwnedDocument(openid, id);
   throwConflict(document);
+}
+
+function normalizeTagList(tags, maxCount = 50) {
+  return [...new Set((tags || [])
+    .map((tag) => String(tag || "").trim().slice(0, 8))
+    .filter(Boolean))]
+    .slice(0, maxCount);
+}
+
+function getSettingsDocumentId(openid) {
+  return `${safeId(openid)}___settings__`;
+}
+
+function toClientSettings(document) {
+  return {
+    customTags: normalizeTagList(document && document.customTags),
+    hiddenDefaultTags: normalizeTagList(document && document.hiddenDefaultTags),
+    version: Math.max(0, Number(document && document.version || 0)),
+    updatedAt: Number(document && document.updatedAt || 0)
+  };
+}
+
+async function getSettings(openid) {
+  try {
+    const result = await collection.doc(getSettingsDocumentId(openid)).get();
+    return toClientSettings(result.data);
+  } catch (error) {
+    const message = String(error.message || error.errMsg || "").toLowerCase();
+    const code = String(error.code || error.errCode || "").toLowerCase();
+    if (
+      /not.*exist|not.*found|不存在/.test(message) ||
+      /document.*not.*exist/.test(code)
+    ) {
+      return toClientSettings(null);
+    }
+    throw error;
+  }
+}
+
+async function updateSettings(openid, settings) {
+  const current = await getSettings(openid);
+  const now = Date.now();
+  const document = {
+    documentType: SETTINGS_TYPE,
+    ownerOpenId: openid,
+    customTags: normalizeTagList(settings && settings.customTags),
+    hiddenDefaultTags: normalizeTagList(settings && settings.hiddenDefaultTags),
+    version: current.version + 1,
+    updatedAt: now,
+    createdAt: current.updatedAt || now
+  };
+  await collection.doc(getSettingsDocumentId(openid)).set({ data: document });
+  return toClientSettings(document);
 }
 
 exports.main = async (event) => {
@@ -410,6 +601,13 @@ exports.main = async (event) => {
         return {
           ok: true,
           data: await removeItem(OPENID, event.id, event)
+        };
+      case "getSettings":
+        return { ok: true, data: await getSettings(OPENID) };
+      case "updateSettings":
+        return {
+          ok: true,
+          data: await updateSettings(OPENID, event.settings)
         };
       default:
         return { ok: false, code: "INVALID_ACTION", message: "不支持的云端操作" };

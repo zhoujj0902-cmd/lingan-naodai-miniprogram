@@ -2,6 +2,7 @@ const { IMAGE_TAGS } = require("./constants");
 
 const CUSTOM_KEY = "customImageTags";
 const HIDDEN_DEFAULT_KEY = "hiddenDefaultImageTags";
+const DIRTY_KEY = "imageTagsCloudDirty";
 
 function normalizeTag(tag) {
   return String(tag || "").trim().slice(0, 8);
@@ -14,8 +15,14 @@ function getAll() {
     .filter((tag, index, list) => tag && !IMAGE_TAGS.includes(tag) && list.indexOf(tag) === index);
 }
 
-function saveAll(tags) {
+function markDirty() {
+  const revision = Number(wx.getStorageSync(DIRTY_KEY) || 0);
+  wx.setStorageSync(DIRTY_KEY, revision + 1);
+}
+
+function saveAll(tags, shouldMarkDirty = true) {
   wx.setStorageSync(CUSTOM_KEY, tags);
+  if (shouldMarkDirty) markDirty();
 }
 
 function getHiddenDefaultTags() {
@@ -25,8 +32,30 @@ function getHiddenDefaultTags() {
     .filter((tag, index, list) => tag && IMAGE_TAGS.includes(tag) && list.indexOf(tag) === index);
 }
 
-function saveHiddenDefaultTags(tags) {
+function saveHiddenDefaultTags(tags, shouldMarkDirty = true) {
   wx.setStorageSync(HIDDEN_DEFAULT_KEY, tags);
+  if (shouldMarkDirty) markDirty();
+}
+
+function getSyncState() {
+  const dirtyRevision = Number(wx.getStorageSync(DIRTY_KEY) || 0);
+  return {
+    customTags: getAll(),
+    hiddenDefaultTags: getHiddenDefaultTags(),
+    isDirty: dirtyRevision > 0,
+    dirtyRevision
+  };
+}
+
+function replaceSyncState(state, expectedDirtyRevision = 0) {
+  const currentDirtyRevision = Number(wx.getStorageSync(DIRTY_KEY) || 0);
+  if (currentDirtyRevision !== expectedDirtyRevision) {
+    return getSyncState();
+  }
+  saveAll((state && state.customTags) || [], false);
+  saveHiddenDefaultTags((state && state.hiddenDefaultTags) || [], false);
+  wx.removeStorageSync(DIRTY_KEY);
+  return getSyncState();
 }
 
 function getDefaultTags() {
@@ -81,6 +110,8 @@ module.exports = {
   getDefaultTags,
   getFirstSelectableTag,
   getSelectableTags,
+  getSyncState,
   normalizeTag,
-  remove
+  remove,
+  replaceSyncState
 };
