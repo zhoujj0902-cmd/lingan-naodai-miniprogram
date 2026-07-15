@@ -1,4 +1,19 @@
 const KEY = "inspirations";
+const LAST_OWNER_KEY = `${KEY}:lastOwner`;
+let storageKey = KEY;
+
+function normalizeOwner(openid) {
+  return String(openid || "").replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+function restoreOwner() {
+  try {
+    const owner = normalizeOwner(wx.getStorageSync(LAST_OWNER_KEY));
+    storageKey = owner ? `${KEY}:${owner}` : KEY;
+  } catch (error) {
+    storageKey = KEY;
+  }
+}
 
 function isExpiredTempImage(path) {
   return typeof path === "string" && path.includes("__tmp__");
@@ -6,7 +21,10 @@ function isExpiredTempImage(path) {
 
 function normalizeItem(item) {
   const originalImages = item.images || [];
-  const images = originalImages.filter((path) => !isExpiredTempImage(path));
+  const activeImageIndexes = originalImages
+    .map((path, index) => ({ path, index }))
+    .filter(({ path }) => !isExpiredTempImage(path));
+  const images = activeImageIndexes.map(({ path }) => path);
   const hasImageChanged = images.length !== originalImages.length;
   const lostAllImages = originalImages.length > 0 && images.length === 0;
   if (!hasImageChanged) {
@@ -15,23 +33,33 @@ function normalizeItem(item) {
   return {
     ...item,
     images,
-    imageFingerprints: images.length ? item.imageFingerprints || [] : [],
+    imageFingerprints: images.length
+      ? activeImageIndexes.map(({ index }) => (item.imageFingerprints || [])[index] || "")
+      : [],
     imageTag: images.length ? item.imageTag || "" : "",
     type: lostAllImages && item.type === "image" ? "sentence" : item.type
   };
 }
 
-function readAll() {
-  const items = wx.getStorageSync(KEY) || [];
+function saveAllToKey(key, items) {
+  wx.setStorageSync(key, items);
+}
+
+function readAllFromKey(key) {
+  const items = wx.getStorageSync(key) || [];
   const activeItems = items.filter((item) => !item.isDeleted);
   const normalized = activeItems.map(normalizeItem);
   const hasChanged =
     activeItems.length !== items.length ||
     activeItems.some((item, index) => item !== normalized[index]);
   if (hasChanged) {
-    saveAll(normalized);
+    saveAllToKey(key, normalized);
   }
   return normalized;
+}
+
+function readAll() {
+  return readAllFromKey(storageKey);
 }
 
 function getAll() {
@@ -42,7 +70,31 @@ function getAll() {
 }
 
 function saveAll(items) {
-  wx.setStorageSync(KEY, items);
+  saveAllToKey(storageKey, items);
+}
+
+function setOwner(openid) {
+  const owner = normalizeOwner(openid);
+  storageKey = owner ? `${KEY}:${owner}` : KEY;
+  if (owner) {
+    wx.setStorageSync(LAST_OWNER_KEY, owner);
+  }
+}
+
+function getLegacyAll() {
+  return readAllFromKey(KEY);
+}
+
+function clearLegacy() {
+  wx.removeStorageSync(KEY);
+}
+
+function replaceAll(items) {
+  const normalized = (items || [])
+    .filter((item) => item && item.id && !item.isDeleted)
+    .map(normalizeItem);
+  saveAll(normalized);
+  return getAll();
 }
 
 function getById(id) {
@@ -50,9 +102,9 @@ function getById(id) {
 }
 
 function add(data) {
-  const now = Date.now();
+  const now = data.createdAt || Date.now();
   const item = {
-    id: `inspiration-${now}`,
+    id: data.id || `inspiration-${now}-${Math.random().toString(16).slice(2, 8)}`,
     content: data.content || "",
     images: data.images || [],
     imageFingerprints: data.imageFingerprints || [],
@@ -61,14 +113,15 @@ function add(data) {
     source: data.source || "",
     note: data.note || "",
     isPinned: Boolean(data.isPinned),
-    isFavorite: true,
-    isUsed: false,
+    isFavorite: data.isFavorite !== false,
+    isUsed: Boolean(data.isUsed),
     isDeleted: false,
     createdAt: now,
-    updatedAt: now
+    updatedAt: data.updatedAt || now,
+    usedAt: data.usedAt || null
   };
   const items = readAll();
-  saveAll([item, ...items]);
+  saveAll([item, ...items.filter((existing) => existing.id !== item.id)]);
   return item;
 }
 
@@ -76,7 +129,7 @@ function update(id, patch) {
   const now = Date.now();
   const items = readAll();
   const next = items.map((item) =>
-    item.id === id ? { ...item, ...patch, updatedAt: now } : item
+    item.id === id ? { ...item, ...patch, updatedAt: patch.updatedAt || now } : item
   );
   saveAll(next);
   return getById(id);
@@ -154,9 +207,15 @@ function formatDate(time) {
   return `${month}-${day} ${hour}:${minute}`;
 }
 
+restoreOwner();
+
 module.exports = {
   getAll,
   getById,
+  getLegacyAll,
+  clearLegacy,
+  replaceAll,
+  setOwner,
   add,
   update,
   backfillImageFingerprints,

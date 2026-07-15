@@ -4,6 +4,10 @@ const FALLBACK_QUALITIES = [75, 55, 35, 20, 10];
 const MAX_CONCURRENT_PREPARE = 2;
 const fingerprintCache = {};
 
+function isCloudFile(filePath) {
+  return String(filePath || "").startsWith("cloud://");
+}
+
 function getFileSize(filePath) {
   return new Promise((resolve) => {
     wx.getFileInfo({
@@ -55,6 +59,7 @@ function hashBuffer(buffer) {
 }
 
 async function getImageFingerprint(filePath) {
+  if (isCloudFile(filePath)) return "";
   const digestInfo = await getFileDigestInfo(filePath);
   const size = digestInfo.size || await getFileSize(filePath);
   if (!size) return "";
@@ -223,7 +228,12 @@ async function saveLocalImage(filePath) {
 }
 
 function removeSavedImage(filePath) {
-  if (!filePath || filePath.startsWith("/assets/") || filePath.includes("__tmp__")) {
+  if (
+    !filePath ||
+    isCloudFile(filePath) ||
+    filePath.startsWith("/assets/") ||
+    filePath.includes("__tmp__")
+  ) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
@@ -293,6 +303,7 @@ module.exports = {
   getImageFingerprint,
   getImageFingerprints,
   getPrepareImagesErrorMessage,
+  isCloudFile,
   isCurrentImageFingerprint,
   prepareLocalImages,
   removeSavedImage,

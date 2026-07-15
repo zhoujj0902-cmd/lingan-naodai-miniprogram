@@ -1,4 +1,5 @@
 const store = require("../../utils/store");
+const cloudStore = require("../../utils/cloudStore");
 const duplicate = require("../../utils/duplicate");
 const imageUtils = require("../../utils/image");
 const security = require("../../utils/security");
@@ -88,6 +89,7 @@ Page({
     selectedItem: null,
     isEditing: false,
     isEditSaving: false,
+    isCloudSyncing: false,
     editContent: "",
     editImages: [],
     editImageTag: ""
@@ -102,6 +104,28 @@ Page({
       imageTags: buildSelectableImageTags(this.data.editImageTag)
     });
     this.loadItems();
+    this.syncCloudItems();
+  },
+
+  async syncCloudItems() {
+    if (this.data.isCloudSyncing) return;
+    this.setData({ isCloudSyncing: true });
+    try {
+      const result = await cloudStore.syncAll();
+      this.loadItems();
+      if (result.migratedCount) {
+        wx.showToast({ title: "旧数据已同步到云端", icon: "success" });
+      }
+      this.hasShownCloudSyncError = false;
+    } catch (error) {
+      console.error("sync inspirations from cloud failed", error);
+      if (!this.hasShownCloudSyncError) {
+        this.hasShownCloudSyncError = true;
+        wx.showToast({ title: "云端同步失败，已显示本地数据", icon: "none" });
+      }
+    } finally {
+      this.setData({ isCloudSyncing: false });
+    }
   },
 
   setFloatingSearchMetrics() {
@@ -305,15 +329,20 @@ Page({
     wx.showLoading({ title: "正在塞入脑袋", mask: true });
     try {
       if (this.data.editImages.length) {
-        imageFingerprints = await imageUtils.getImageFingerprints(this.data.editImages);
+        imageFingerprints = await duplicate.getEditImageFingerprints(
+          item,
+          this.data.editImages
+        );
         const storedFingerprints = await duplicate.getStoredImageFingerprintSet(item.id);
-        const uniqueFingerprints = new Set(imageFingerprints);
-        if (uniqueFingerprints.size !== imageFingerprints.length) {
+        const validFingerprints = imageFingerprints.filter(Boolean);
+        const uniqueFingerprints = new Set(validFingerprints);
+        if (uniqueFingerprints.size !== validFingerprints.length) {
           toast = { title: "这次有重复图片", icon: "none" };
-        } else if (imageFingerprints.some((fingerprint) => storedFingerprints.has(fingerprint))) {
+        } else if (validFingerprints.some((fingerprint) => storedFingerprints.has(fingerprint))) {
           toast = { title: "图片已经在脑袋里", icon: "none" };
         } else {
-          const checkResult = await security.checkImages(this.data.editImages);
+          const unsavedImages = getUnsavedEditImages(item, this.data.editImages);
+          const checkResult = await security.checkImages(unsavedImages);
           if (!checkResult.pass) {
             toast = checkResult.unsafeCount
               ? { title: "有图片未通过安全检测", icon: "none" }
@@ -323,23 +352,26 @@ Page({
       }
 
       if (!toast) {
-        const removedImages = (item.images || []).filter(
-          (image) => !this.data.editImages.includes(image)
+        await cloudStore.updateItem(
+          item,
+          {
+            content,
+            imageTag: this.data.editImages.length
+              ? this.data.editImageTag || tagStore.getFirstSelectableTag()
+              : ""
+          },
+          this.data.editImages,
+          imageFingerprints
         );
-        store.update(item.id, {
-          content,
-          images: this.data.editImages,
-          imageFingerprints,
-          imageTag: this.data.editImages.length ? this.data.editImageTag || tagStore.getFirstSelectableTag() : "",
-          type: this.data.editImages.length ? "image" : "sentence"
-        });
         if (this.data.editImages.length && this.data.editImageTag) {
           tagStore.add(this.data.editImageTag);
         }
-        cleanSavedImages(removedImages);
         this.refreshSelected(item.id);
         toast = { title: "已更新", icon: "success" };
       }
+    } catch (error) {
+      console.error("update inspiration in cloud failed", error);
+      toast = { title: "云端更新失败，请稍后重试", icon: "none" };
     } finally {
       wx.hideLoading();
       this.setData({ isEditSaving: false });
@@ -414,19 +446,22 @@ Page({
     });
   },
 
-  previewSelectedImage(event) {
+  async previewSelectedImage(event) {
     const images = (this.data.selectedItem && this.data.selectedItem.images || []).filter(Boolean);
     if (!images.length) return;
     const current = event.currentTarget.dataset.src || images[0];
+    const previewUrls = await cloudStore.getPreviewUrls(images);
+    const currentIndex = images.indexOf(current);
     wx.previewImage({
-      current,
-      urls: images
+      current: previewUrls[currentIndex >= 0 ? currentIndex : 0],
+      urls: previewUrls
     });
   },
 
   onStoredImageError(event) {
     const { id, src } = event.currentTarget.dataset;
     if (!id || !src) return;
+    if (imageUtils.isCloudFile(src)) return;
     store.removeImage(id, src);
     if (this.data.selectedItem && this.data.selectedItem.id === id) {
       const raw = store.getById(id);
@@ -446,6 +481,7 @@ Page({
   onEditImageError(event) {
     const src = event.currentTarget.dataset.src;
     if (!src) return;
+    if (imageUtils.isCloudFile(src)) return;
     const editImages = this.data.editImages.filter((path) => path !== src);
     this.setData({
       editImages,
@@ -453,20 +489,33 @@ Page({
     });
   },
 
-  togglePinnedSelected() {
+  async togglePinnedSelected() {
     const item = this.data.selectedItem;
     if (!item) return;
-    store.update(item.id, { isPinned: !item.isPinned });
-    this.refreshSelected(item.id);
+    try {
+      await cloudStore.updateFields(item.id, { isPinned: !item.isPinned });
+      this.refreshSelected(item.id);
+    } catch (error) {
+      console.error("update pinned state in cloud failed", error);
+      wx.showToast({ title: "云端更新失败", icon: "none" });
+    }
   },
 
-  toggleUsedSelected() {
+  async toggleUsedSelected() {
     const item = this.data.selectedItem;
     if (!item) return;
     const nextUsed = !item.isUsed;
-    store.update(item.id, { isUsed: nextUsed, usedAt: nextUsed ? Date.now() : null });
-    this.refreshSelected(item.id);
-    wx.showToast({ title: nextUsed ? "已标记用过了" : "已改回待用", icon: "success" });
+    try {
+      await cloudStore.updateFields(item.id, {
+        isUsed: nextUsed,
+        usedAt: nextUsed ? Date.now() : null
+      });
+      this.refreshSelected(item.id);
+      wx.showToast({ title: nextUsed ? "已标记用过了" : "已改回待用", icon: "success" });
+    } catch (error) {
+      console.error("update used state in cloud failed", error);
+      wx.showToast({ title: "云端更新失败", icon: "none" });
+    }
   },
 
   confirmDeleteSelected() {
@@ -480,15 +529,21 @@ Page({
       success: async (res) => {
         if (res.confirm) {
           wx.showLoading({ title: "正在删除", mask: true });
+          let hasDeleted = false;
           try {
-            await cleanSavedImages(item.images);
-            store.remove(item.id);
+            await cloudStore.removeItem(item);
             this.closeDetail();
             this.loadItems();
+            hasDeleted = true;
+          } catch (error) {
+            console.error("remove inspiration from cloud failed", error);
           } finally {
             wx.hideLoading();
           }
-          wx.showToast({ title: "已删除", icon: "success" });
+          wx.showToast({
+            title: hasDeleted ? "已删除" : "云端删除失败，请稍后重试",
+            icon: hasDeleted ? "success" : "none"
+          });
         }
       }
     });

@@ -1,5 +1,6 @@
 const store = require("../../utils/store");
 const clipboardStore = require("../../utils/clipboardStore");
+const cloudStore = require("../../utils/cloudStore");
 const duplicate = require("../../utils/duplicate");
 const imageUtils = require("../../utils/image");
 const security = require("../../utils/security");
@@ -198,7 +199,7 @@ Page({
       }
 
       if (!toast) {
-        store.add({
+        await cloudStore.createItem({
           content,
           images: this.data.images,
           imageFingerprints,
@@ -225,6 +226,9 @@ Page({
           hasSaved: true
         });
       }
+    } catch (error) {
+      console.error("save inspiration to cloud failed", error);
+      toast = { title: "云端保存失败，请稍后重试", icon: "none" };
     } finally {
       wx.hideLoading();
       this.setData({ isSaving: false });

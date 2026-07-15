@@ -9,7 +9,9 @@ async function getStoredImageFingerprintSet(excludeId = "") {
   for (const item of items) {
     const images = (item.images || []).filter(Boolean);
     const storedFingerprints = item.imageFingerprints || [];
+    const canCalculateFingerprints = images.every((image) => !imageUtils.isCloudFile(image));
     const needsBackfill =
+      canCalculateFingerprints &&
       images.length > 0 &&
       (storedFingerprints.length !== images.length ||
         storedFingerprints.some(
@@ -39,6 +41,26 @@ async function getStoredImageFingerprintSet(excludeId = "") {
   return fingerprints;
 }
 
+async function getEditImageFingerprints(selectedItem, editImages) {
+  const originalImages = (selectedItem && selectedItem.images) || [];
+  const originalFingerprints = (selectedItem && selectedItem.imageFingerprints) || [];
+  const fingerprintsByImage = new Map();
+  originalImages.forEach((image, index) => {
+    if (image && originalFingerprints[index]) {
+      fingerprintsByImage.set(image, originalFingerprints[index]);
+    }
+  });
+
+  const fingerprints = [];
+  for (const image of (editImages || []).filter(Boolean)) {
+    const existingFingerprint = fingerprintsByImage.get(image);
+    const fingerprint = existingFingerprint || await imageUtils.getImageFingerprint(image);
+    fingerprints.push(fingerprint || "");
+  }
+  return fingerprints;
+}
+
 module.exports = {
+  getEditImageFingerprints,
   getStoredImageFingerprintSet
 };
