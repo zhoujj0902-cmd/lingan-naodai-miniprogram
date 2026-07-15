@@ -40,6 +40,25 @@ function getUnsavedEditImages(selectedItem, editImages) {
   return (editImages || []).filter((image) => image && !savedImages.has(image));
 }
 
+function rebaseEditImages(baseItem, latestItem, draftImages) {
+  const baseImages = new Set((baseItem && baseItem.images || []).filter(Boolean));
+  const draftImageSet = new Set((draftImages || []).filter(Boolean));
+  const rebasedImages = (latestItem && latestItem.images || []).filter(
+    (image) => !baseImages.has(image) || draftImageSet.has(image)
+  );
+  (draftImages || []).forEach((image) => {
+    if (
+      image &&
+      !baseImages.has(image) &&
+      !imageUtils.isCloudFile(image) &&
+      !rebasedImages.includes(image)
+    ) {
+      rebasedImages.push(image);
+    }
+  });
+  return rebasedImages;
+}
+
 function estimateCardHeight(item) {
   const contentLength = String(item.content || "").length;
   const tagLength = String(item.imageTag || "").length;
@@ -90,6 +109,10 @@ Page({
     isEditing: false,
     isEditSaving: false,
     isCloudSyncing: false,
+    isLoadingMore: false,
+    hasMoreCloudItems: false,
+    syncStatusText: "",
+    syncStatusType: "idle",
     editContent: "",
     editImages: [],
     editImageTag: ""
@@ -100,8 +123,10 @@ Page({
   },
 
   onShow() {
+    const syncMeta = store.getSyncMeta();
     this.setData({
-      imageTags: buildSelectableImageTags(this.data.editImageTag)
+      imageTags: buildSelectableImageTags(this.data.editImageTag),
+      hasMoreCloudItems: Boolean(syncMeta.hasMore)
     });
     this.loadItems();
     this.syncCloudItems();
@@ -109,10 +134,20 @@ Page({
 
   async syncCloudItems() {
     if (this.data.isCloudSyncing) return;
-    this.setData({ isCloudSyncing: true });
+    this.setData({
+      isCloudSyncing: true,
+      syncStatusText: "正在同步",
+      syncStatusType: "syncing"
+    });
     try {
       const result = await cloudStore.syncAll();
       this.loadItems();
+      this.refreshOpenDetail();
+      this.setData({
+        hasMoreCloudItems: Boolean(result.hasMore),
+        syncStatusText: "已同步",
+        syncStatusType: "synced"
+      });
       if (result.migratedCount) {
         wx.showToast({ title: "旧数据已同步到云端", icon: "success" });
       }
@@ -123,9 +158,113 @@ Page({
         this.hasShownCloudSyncError = true;
         wx.showToast({ title: "云端同步失败，已显示本地数据", icon: "none" });
       }
+      this.setData({
+        syncStatusText: "离线 · 已显示缓存",
+        syncStatusType: "offline"
+      });
     } finally {
-      this.setData({ isCloudSyncing: false });
+      this.setData({ isCloudSyncing: false }, () => {
+        if (
+          this.data.hasMoreCloudItems &&
+          (String(this.data.keyword || "").trim() || this.data.activeType !== "all")
+        ) {
+          this.ensureAllCloudItems();
+        }
+      });
     }
+  },
+
+  refreshOpenDetail() {
+    const selectedItem = this.data.selectedItem;
+    if (!selectedItem || this.data.isEditing) return;
+    const latest = store.getById(selectedItem.id);
+    if (!latest) {
+      this.closeDetail();
+      return;
+    }
+    const decorated = this.decorateItem(latest);
+    this.setData({
+      selectedItem: decorated,
+      editContent: decorated.content || "",
+      editImages: decorated.images || [],
+      editImageTag: normalizeImageTag(decorated.imageTag),
+      imageTags: buildSelectableImageTags(decorated.imageTag)
+    });
+  },
+
+  async loadMoreCloudItems() {
+    if (
+      this.data.isCloudSyncing ||
+      this.data.isLoadingMore ||
+      !this.data.hasMoreCloudItems
+    ) {
+      return;
+    }
+    this.setData({
+      isLoadingMore: true,
+      syncStatusText: "正在加载更多",
+      syncStatusType: "syncing"
+    });
+    try {
+      const result = await cloudStore.loadNextPage();
+      this.loadItems();
+      this.setData({
+        hasMoreCloudItems: Boolean(result.hasMore),
+        syncStatusText: result.hasMore ? "已同步" : "已加载全部",
+        syncStatusType: "synced"
+      });
+    } catch (error) {
+      console.error("load more inspirations failed", error);
+      this.setData({
+        syncStatusText: "加载失败 · 上滑重试",
+        syncStatusType: "offline"
+      });
+    } finally {
+      this.setData({ isLoadingMore: false });
+    }
+  },
+
+  async ensureAllCloudItems() {
+    if (
+      this.data.isCloudSyncing ||
+      this.data.isLoadingMore ||
+      !this.data.hasMoreCloudItems
+    ) {
+      return;
+    }
+    this.setData({
+      isLoadingMore: true,
+      syncStatusText: "正在加载完整结果",
+      syncStatusType: "syncing"
+    });
+    let hasMore = true;
+    try {
+      while (hasMore) {
+        const result = await cloudStore.loadNextPage();
+        hasMore = Boolean(result.hasMore);
+      }
+      this.loadItems();
+      this.setData({
+        hasMoreCloudItems: false,
+        syncStatusText: "已加载全部",
+        syncStatusType: "synced"
+      });
+    } catch (error) {
+      console.error("load complete inspiration results failed", error);
+      const meta = store.getSyncMeta();
+      this.loadItems();
+      this.setData({
+        hasMoreCloudItems: Boolean(meta.hasMore),
+        syncStatusText: "部分结果 · 上滑继续加载",
+        syncStatusType: "offline"
+      });
+    } finally {
+      this.setData({ isLoadingMore: false });
+    }
+  },
+
+  onReachBottom() {
+    this.loadMoreCloudItems();
   },
 
   setFloatingSearchMetrics() {
@@ -174,12 +313,18 @@ Page({
     clearTimeout(this.searchTimer);
     this.searchTimer = setTimeout(() => {
       this.loadItems();
+      if (String(this.data.keyword || "").trim()) {
+        this.ensureAllCloudItems();
+      }
     }, 180);
   },
 
   onFilterTap(event) {
     this.setData({ activeType: event.currentTarget.dataset.type }, () => {
       this.loadItems();
+      if (this.data.activeType !== "all") {
+        this.ensureAllCloudItems();
+      }
     });
   },
 
@@ -371,7 +516,15 @@ Page({
       }
     } catch (error) {
       console.error("update inspiration in cloud failed", error);
-      toast = { title: "云端更新失败，请稍后重试", icon: "none" };
+      if (cloudStore.isConflict(error) && error.latest) {
+        this.handleEditConflict(item, error.latest);
+      } else if (error.code === "DUPLICATE_CONTENT") {
+        toast = { title: "这段文案已经在脑袋里", icon: "none" };
+      } else if (error.code === "DUPLICATE_IMAGE") {
+        toast = { title: "图片已经在脑袋里", icon: "none" };
+      } else {
+        toast = { title: "云端更新失败，请稍后重试", icon: "none" };
+      }
     } finally {
       wx.hideLoading();
       this.setData({ isEditSaving: false });
@@ -380,6 +533,49 @@ Page({
     if (toast) {
       wx.showToast(toast);
     }
+  },
+
+  handleEditConflict(baseItem, latestItem) {
+    if (latestItem.isDeleted) {
+      store.mergeRemoteItems([latestItem]);
+      this.closeDetail();
+      this.loadItems();
+      wx.showModal({
+        title: "这条灵感已被删除",
+        content: "它刚刚在其他设备被删除，本次修改没有覆盖云端。",
+        showCancel: false,
+        confirmText: "知道了"
+      });
+      return;
+    }
+    const editImages = rebaseEditImages(baseItem, latestItem, this.data.editImages);
+    const editContent =
+      this.data.editContent === String(baseItem.content || "")
+        ? String(latestItem.content || "")
+        : this.data.editContent;
+    const editImageTag =
+      normalizeImageTag(this.data.editImageTag) === normalizeImageTag(baseItem.imageTag)
+        ? normalizeImageTag(latestItem.imageTag)
+        : this.data.editImageTag;
+    store.mergeRemoteItems([latestItem]);
+    const selectedItem = this.decorateItem(latestItem);
+    this.setData({
+      selectedItem,
+      isEditing: true,
+      editContent,
+      editImages,
+      editImageTag: editImages.length ? editImageTag || tagStore.getFirstSelectableTag() : "",
+      imageTags: buildSelectableImageTags(editImageTag),
+      syncStatusText: "已获取其他设备的更新",
+      syncStatusType: "synced"
+    });
+    this.loadItems();
+    wx.showModal({
+      title: "发现其他设备的修改",
+      content: "当前编辑内容已保留，并合并了云端最新图片。请检查后再次保存。",
+      showCancel: false,
+      confirmText: "知道了"
+    });
   },
 
   cancelEdit() {
@@ -497,7 +693,12 @@ Page({
       this.refreshSelected(item.id);
     } catch (error) {
       console.error("update pinned state in cloud failed", error);
-      wx.showToast({ title: "云端更新失败", icon: "none" });
+      if (cloudStore.isConflict(error)) {
+        this.refreshSelected(item.id);
+        wx.showToast({ title: "已同步其他设备更新，请重试", icon: "none" });
+      } else {
+        wx.showToast({ title: "云端更新失败", icon: "none" });
+      }
     }
   },
 
@@ -514,7 +715,12 @@ Page({
       wx.showToast({ title: nextUsed ? "已标记用过了" : "已改回待用", icon: "success" });
     } catch (error) {
       console.error("update used state in cloud failed", error);
-      wx.showToast({ title: "云端更新失败", icon: "none" });
+      if (cloudStore.isConflict(error)) {
+        this.refreshSelected(item.id);
+        wx.showToast({ title: "已同步其他设备更新，请重试", icon: "none" });
+      } else {
+        wx.showToast({ title: "云端更新失败", icon: "none" });
+      }
     }
   },
 
@@ -537,6 +743,14 @@ Page({
             hasDeleted = true;
           } catch (error) {
             console.error("remove inspiration from cloud failed", error);
+            if (cloudStore.isConflict(error)) {
+              this.refreshSelected(item.id);
+              wx.showToast({
+                title: "其他设备刚更新了这条灵感，请重新确认",
+                icon: "none"
+              });
+              return;
+            }
           } finally {
             wx.hideLoading();
           }
@@ -551,7 +765,11 @@ Page({
 
   refreshSelected(id) {
     const raw = store.getById(id);
-    if (!raw) return;
+    if (!raw) {
+      this.closeDetail();
+      this.loadItems();
+      return;
+    }
     const selectedItem = this.decorateItem(raw);
     this.setData({
       selectedItem,

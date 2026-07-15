@@ -225,6 +225,53 @@
   color: #fff;
 }
 
+.sync-status {
+  min-height: 32rpx;
+  margin: -8rpx 2rpx 14rpx;
+  color: #817a90;
+  font-size: 21rpx;
+  line-height: 32rpx;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10rpx;
+}
+
+.sync-dot {
+  width: 10rpx;
+  height: 10rpx;
+  border-radius: 50%;
+  background: #b8b1c5;
+}
+
+.sync-status.syncing .sync-dot {
+  background: #8d6bf1;
+  animation: sync-pulse 1s ease-in-out infinite;
+}
+
+.sync-status.synced .sync-dot {
+  background: #8dbb34;
+}
+
+.sync-status.offline {
+  color: #8b6570;
+}
+
+.sync-status.offline .sync-dot {
+  background: #d58a9c;
+}
+
+@keyframes sync-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 .masonry {
   display: flex;
   gap: 16rpx;

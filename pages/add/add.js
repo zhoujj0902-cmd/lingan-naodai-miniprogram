@@ -228,7 +228,13 @@ Page({
       }
     } catch (error) {
       console.error("save inspiration to cloud failed", error);
-      toast = { title: "云端保存失败，请稍后重试", icon: "none" };
+      if (error.code === "DUPLICATE_CONTENT") {
+        toast = { title: "这段文案已经在脑袋里", icon: "none" };
+      } else if (error.code === "DUPLICATE_IMAGE") {
+        toast = { title: "图片已经在脑袋里", icon: "none" };
+      } else {
+        toast = { title: "云端保存失败，请稍后重试", icon: "none" };
+      }
     } finally {
       wx.hideLoading();
       this.setData({ isSaving: false });

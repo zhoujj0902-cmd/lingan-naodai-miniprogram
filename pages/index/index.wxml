@@ -45,6 +45,11 @@
     </view>
   </scroll-view>
 
+  <view class="sync-status {{syncStatusType}}" aria-live="polite">
+    <view class="sync-dot"></view>
+    <text>{{syncStatusText || " "}}</text>
+  </view>
+
   <view wx:if="{{items.length}}" class="masonry">
     <view class="column">
       <block wx:for="{{leftItems}}" wx:key="id">

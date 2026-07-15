@@ -1,5 +1,12 @@
 const KEY = "inspirations";
 const LAST_OWNER_KEY = `${KEY}:lastOwner`;
+const DEFAULT_SYNC_META = {
+  paginationVersion: 0,
+  nextCursor: "",
+  hasMore: false,
+  lastSyncAt: 0,
+  lastSyncedAt: 0
+};
 let storageKey = KEY;
 
 function normalizeOwner(openid) {
@@ -73,6 +80,23 @@ function saveAll(items) {
   saveAllToKey(storageKey, items);
 }
 
+function getSyncMetaKey() {
+  return `${storageKey}:syncMeta`;
+}
+
+function getSyncMeta() {
+  return {
+    ...DEFAULT_SYNC_META,
+    ...(wx.getStorageSync(getSyncMetaKey()) || {})
+  };
+}
+
+function setSyncMeta(patch) {
+  const next = { ...getSyncMeta(), ...(patch || {}) };
+  wx.setStorageSync(getSyncMetaKey(), next);
+  return next;
+}
+
 function setOwner(openid) {
   const owner = normalizeOwner(openid);
   storageKey = owner ? `${KEY}:${owner}` : KEY;
@@ -97,6 +121,37 @@ function replaceAll(items) {
   return getAll();
 }
 
+function mergeRemoteItems(remoteItems) {
+  const itemsById = new Map(readAll().map((item) => [item.id, item]));
+  (remoteItems || []).forEach((remoteItem) => {
+    if (!remoteItem || !remoteItem.id) return;
+    const localItem = itemsById.get(remoteItem.id);
+    const remoteVersion = Number(remoteItem.version || 0);
+    const localVersion = Number(localItem && localItem.version || 0);
+    const remoteUpdatedAt = Number(remoteItem.updatedAt || 0);
+    const localUpdatedAt = Number(localItem && localItem.updatedAt || 0);
+    if (remoteItem.isDeleted) {
+      if (
+        !localItem ||
+        remoteVersion > localVersion ||
+        (remoteVersion === localVersion && remoteUpdatedAt >= localUpdatedAt)
+      ) {
+        itemsById.delete(remoteItem.id);
+      }
+      return;
+    }
+    if (
+      !localItem ||
+      remoteVersion > localVersion ||
+      (remoteVersion === localVersion && remoteUpdatedAt >= localUpdatedAt)
+    ) {
+      itemsById.set(remoteItem.id, normalizeItem(remoteItem));
+    }
+  });
+  saveAll([...itemsById.values()]);
+  return getAll();
+}
+
 function getById(id) {
   return readAll().find((item) => item.id === id);
 }
@@ -118,7 +173,8 @@ function add(data) {
     isDeleted: false,
     createdAt: now,
     updatedAt: data.updatedAt || now,
-    usedAt: data.usedAt || null
+    usedAt: data.usedAt || null,
+    version: Number(data.version || 1)
   };
   const items = readAll();
   saveAll([item, ...items.filter((existing) => existing.id !== item.id)]);
@@ -214,6 +270,9 @@ module.exports = {
   getById,
   getLegacyAll,
   clearLegacy,
+  getSyncMeta,
+  setSyncMeta,
+  mergeRemoteItems,
   replaceAll,
   setOwner,
   add,

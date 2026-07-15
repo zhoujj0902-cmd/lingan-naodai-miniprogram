@@ -4,6 +4,8 @@ const store = require("./store");
 
 const FUNCTION_NAME = "inspirationData";
 const MIGRATION_VERSION = 1;
+const PAGINATION_VERSION = 2;
+const PAGE_SIZE = 30;
 const MAX_CONCURRENT_UPLOADS = 2;
 let sessionPromise = null;
 
@@ -44,6 +46,8 @@ function callDataFunction(action, data = {}) {
     if (!result.ok) {
       const error = new Error(result.message || "云端操作失败");
       error.code = result.code || "";
+      error.data = result.data || null;
+      error.latest = result.data && result.data.latest || null;
       error.isCloudOperationFailure = true;
       throw error;
     }
@@ -155,63 +159,113 @@ function buildItem(data, id, images) {
     isDeleted: false,
     createdAt: data.createdAt || now,
     updatedAt: data.updatedAt || now,
-    usedAt: data.usedAt || null
+    usedAt: data.usedAt || null,
+    version: Number(data.version || 1)
   };
 }
 
-async function createItem(data) {
+function getBaseValues(item, patch) {
+  const result = {};
+  Object.keys(patch || {}).forEach((field) => {
+    if (field !== "updatedAt") result[field] = item[field];
+  });
+  return result;
+}
+
+async function createItem(data, options = {}) {
   const id = data.id || createId();
   const localImages = data.images || [];
   const uploadResult = await uploadImages(localImages, id, data.imageFingerprints || []);
   const item = buildItem(data, id, uploadResult.images);
+  let savedItem;
   try {
-    await callDataFunction("upsert", { item });
+    savedItem = await callDataFunction(options.isMigration ? "import" : "upsert", { item });
   } catch (error) {
-    // A rejected cloud call can have an unknown final state. Only clean up when
-    // the function explicitly confirms that the database operation failed.
     if (error.isCloudOperationFailure) {
       await deleteCloudFiles(uploadResult.uploadedFileIDs);
     }
     throw error;
   }
-  store.add(item);
+  if (!savedItem || !Array.isArray(savedItem.images)) {
+    savedItem = item;
+  }
+  store.add(savedItem);
   await removeLocalFiles(localImages);
-  return item;
+  return savedItem;
 }
 
-async function updateItem(item, patch, editImages, imageFingerprints) {
+async function updateItem(item, patch, editImages, imageFingerprints, options = {}) {
   const sourceImages = editImages || item.images || [];
   const uploadResult = await uploadImages(sourceImages, item.id, imageFingerprints || []);
   const nextPatch = {
     ...patch,
     images: uploadResult.images,
     imageFingerprints: imageFingerprints || [],
-    type: uploadResult.images.length ? "image" : "sentence",
-    updatedAt: Date.now()
+    type: uploadResult.images.length ? "image" : "sentence"
   };
+  let savedItem;
   try {
-    await callDataFunction("update", { id: item.id, patch: nextPatch });
+    savedItem = await callDataFunction("update", {
+      id: item.id,
+      patch: nextPatch,
+      baseVersion: Number(item.version || 0),
+      baseValues: getBaseValues(item, nextPatch),
+      force: Boolean(options.force)
+    });
   } catch (error) {
     if (error.isCloudOperationFailure) {
       await deleteCloudFiles(uploadResult.uploadedFileIDs);
     }
     throw error;
   }
-  const updated = store.update(item.id, nextPatch);
+  if (!savedItem || !Array.isArray(savedItem.images)) {
+    savedItem = {
+      ...item,
+      ...nextPatch,
+      updatedAt: Date.now(),
+      version: Number(item.version || 1) + 1
+    };
+  }
+  store.mergeRemoteItems([savedItem]);
   await removeLocalFiles(sourceImages);
-  return updated;
+  return store.getById(item.id);
 }
 
 async function updateFields(id, patch) {
   await activateSession();
-  const nextPatch = { ...patch, updatedAt: Date.now() };
-  await callDataFunction("update", { id, patch: nextPatch });
-  return store.update(id, nextPatch);
+  const item = store.getById(id);
+  if (!item) throw new Error("本地缓存中找不到这条灵感");
+  try {
+    const savedItem = await callDataFunction("update", {
+      id,
+      patch,
+      baseVersion: Number(item.version || 0),
+      baseValues: getBaseValues(item, patch)
+    });
+    store.mergeRemoteItems([savedItem]);
+    return store.getById(id);
+  } catch (error) {
+    if (error.code === "CONFLICT" && error.latest) {
+      store.mergeRemoteItems([error.latest]);
+    }
+    throw error;
+  }
 }
 
-async function removeItem(item) {
+async function removeItem(item, options = {}) {
   await activateSession();
-  await callDataFunction("remove", { id: item.id });
+  try {
+    await callDataFunction("remove", {
+      id: item.id,
+      baseVersion: Number(item.version || 0),
+      force: Boolean(options.force)
+    });
+  } catch (error) {
+    if (error.code === "CONFLICT" && error.latest) {
+      store.mergeRemoteItems([error.latest]);
+    }
+    throw error;
+  }
   store.remove(item.id);
   await removeLocalFiles(item.images || []);
 }
@@ -219,6 +273,44 @@ async function removeItem(item) {
 async function listRemoteItems() {
   const items = await callDataFunction("list");
   return (items || []).filter((item) => item && item.id);
+}
+
+async function listRemotePage(cursor = "") {
+  try {
+    const result = await callDataFunction("listPage", { cursor, pageSize: PAGE_SIZE });
+    return {
+      items: (result && result.items || []).filter((item) => item && item.id),
+      nextCursor: result && result.nextCursor || "",
+      hasMore: Boolean(result && result.hasMore),
+      syncCursor: Number(result && result.syncCursor || 0)
+    };
+  } catch (error) {
+    if (error.code !== "INVALID_ACTION") throw error;
+    return {
+      items: await listRemoteItems(),
+      nextCursor: "",
+      hasMore: false,
+      syncCursor: Date.now()
+    };
+  }
+}
+
+async function listRemoteChanges(since) {
+  try {
+    const result = await callDataFunction("changes", { since: Number(since || 0) });
+    return {
+      items: (result && result.items || []).filter((item) => item && item.id),
+      syncCursor: Number(result && result.syncCursor || 0),
+      isFullSnapshot: false
+    };
+  } catch (error) {
+    if (error.code !== "INVALID_ACTION") throw error;
+    return {
+      items: await listRemoteItems(),
+      syncCursor: Date.now(),
+      isFullSnapshot: true
+    };
+  }
 }
 
 async function migrateItem(item) {
@@ -244,39 +336,105 @@ async function migrateItem(item) {
       );
     }
   }
-  return createItem({ ...item, images, imageFingerprints });
+  return createItem({ ...item, images, imageFingerprints }, { isMigration: true });
+}
+
+async function migrateLegacyItems(legacyItems, session) {
+  const migrationKey = getMigrationKey(session.openid);
+  if (wx.getStorageSync(migrationKey)) {
+    return { didMigrate: false, migratedCount: 0 };
+  }
+  let remoteItems = await listRemoteItems();
+  let migratedCount = 0;
+  const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
+  const userCacheItems = store.getAll();
+  const localById = new Map();
+  [...legacyItems, ...userCacheItems].forEach((item) => localById.set(item.id, item));
+  for (const item of localById.values()) {
+    const remoteItem = remoteById.get(item.id);
+    if (remoteItem) {
+      store.mergeRemoteItems([remoteItem]);
+      await removeLocalFiles(item.images || []);
+    } else {
+      await migrateItem(item);
+      migratedCount += 1;
+    }
+  }
+  wx.setStorageSync(migrationKey, true);
+  store.clearLegacy();
+  remoteItems = await listRemoteItems();
+  store.replaceAll(remoteItems);
+  const firstPage = await listRemotePage();
+  store.setSyncMeta({
+    paginationVersion: PAGINATION_VERSION,
+    nextCursor: "",
+    hasMore: false,
+    lastSyncAt: firstPage.syncCursor,
+    lastSyncedAt: Date.now()
+  });
+  return { didMigrate: true, migratedCount };
 }
 
 async function syncAll() {
   const legacyItems = store.getLegacyAll();
   const session = await activateSession();
-  const migrationKey = getMigrationKey(session.openid);
-  let remoteItems = await listRemoteItems();
-  let migratedCount = 0;
-
-  if (!wx.getStorageSync(migrationKey)) {
-    const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
-    const userCacheItems = store.getAll();
-    const localById = new Map();
-    [...legacyItems, ...userCacheItems].forEach((item) => localById.set(item.id, item));
-    const localItems = [...localById.values()];
-    for (const item of localItems) {
-      const remoteItem = remoteById.get(item.id);
-      if (remoteItem) {
-        store.update(item.id, remoteItem);
-        await removeLocalFiles(item.images || []);
-      } else {
-        await migrateItem(item);
-        migratedCount += 1;
-      }
-    }
-    wx.setStorageSync(migrationKey, true);
-    store.clearLegacy();
-    remoteItems = await listRemoteItems();
+  const migration = await migrateLegacyItems(legacyItems, session);
+  if (migration.didMigrate) {
+    return {
+      items: store.getAll(),
+      migratedCount: migration.migratedCount,
+      hasMore: false
+    };
   }
 
-  store.replaceAll(remoteItems);
-  return { items: store.getAll(), migratedCount };
+  const meta = store.getSyncMeta();
+  const firstPage = await listRemotePage();
+  const isPaginationInitialized = meta.paginationVersion === PAGINATION_VERSION;
+  if (!isPaginationInitialized) {
+    store.replaceAll(firstPage.items);
+  } else {
+    if (meta.lastSyncAt) {
+      const changes = await listRemoteChanges(meta.lastSyncAt);
+      if (changes.isFullSnapshot) store.replaceAll(changes.items);
+      else store.mergeRemoteItems(changes.items);
+      meta.lastSyncAt = changes.syncCursor;
+    } else {
+      meta.lastSyncAt = firstPage.syncCursor;
+    }
+    store.mergeRemoteItems(firstPage.items);
+  }
+  store.setSyncMeta({
+    paginationVersion: PAGINATION_VERSION,
+    nextCursor: isPaginationInitialized ? meta.nextCursor : firstPage.nextCursor,
+    hasMore: isPaginationInitialized ? meta.hasMore : firstPage.hasMore,
+    lastSyncAt: meta.lastSyncAt || firstPage.syncCursor,
+    lastSyncedAt: Date.now()
+  });
+  return {
+    items: store.getAll(),
+    migratedCount: 0,
+    hasMore: isPaginationInitialized ? meta.hasMore : firstPage.hasMore
+  };
+}
+
+async function loadNextPage() {
+  await activateSession();
+  const meta = store.getSyncMeta();
+  if (meta.paginationVersion !== PAGINATION_VERSION || !meta.hasMore) {
+    return { items: store.getAll(), hasMore: false, loadedCount: 0 };
+  }
+  const page = await listRemotePage(meta.nextCursor);
+  store.mergeRemoteItems(page.items);
+  store.setSyncMeta({
+    nextCursor: page.nextCursor,
+    hasMore: page.hasMore,
+    lastSyncedAt: Date.now()
+  });
+  return {
+    items: store.getAll(),
+    hasMore: page.hasMore,
+    loadedCount: page.items.length
+  };
 }
 
 async function getPreviewUrls(images) {
@@ -294,11 +452,17 @@ async function getPreviewUrls(images) {
   }
 }
 
+function isConflict(error) {
+  return Boolean(error && error.code === "CONFLICT");
+}
+
 module.exports = {
   createItem,
   getPreviewUrls,
   getSession,
+  isConflict,
   listRemoteItems,
+  loadNextPage,
   removeItem,
   syncAll,
   updateFields,
