@@ -60,26 +60,47 @@ function rebaseEditImages(baseItem, latestItem, draftImages) {
 }
 
 function estimateCardHeight(item) {
-  const contentLength = String(item.content || "").length;
+  const content = String(item.content || "");
   const tagLength = String(item.imageTag || "").length;
   const hasImages = item.images && item.images.length;
-  const estimatedTextLines = Math.max(1, Math.ceil(contentLength / 9));
+  const estimatedTextLines = content
+    ? content.split(/\r?\n/).reduce(
+      (total, line) => total + Math.max(1, Math.ceil(Array.from(line).length / 9)),
+      0
+    )
+    : 0;
   const tagLines = tagLength > 6 ? 2 : 1;
-  const bodyBase = hasImages ? 118 : 196;
+  const bodyMinHeight = hasImages ? 164 : 284;
   const imageHeight = hasImages ? 340 : 0;
-  const textHeight = contentLength ? estimatedTextLines * 44 : 0;
+  const textHeight = estimatedTextLines * 44;
   const extraTagHeight = tagLines > 1 ? 42 : 0;
-  return imageHeight + bodyBase + textHeight + extraTagHeight + 18;
+  const naturalBodyHeight = 136 + textHeight + extraTagHeight + (content ? 18 : 0);
+  return imageHeight + Math.max(bodyMinHeight, naturalBodyHeight) + 18;
 }
 
-function splitMasonryColumns(items) {
+function getMasonryItemSignature(item) {
+  return JSON.stringify([
+    item.version || 0,
+    item.content || "",
+    item.imageTag || "",
+    item.statusText || "",
+    Boolean(item.isPinned),
+    Boolean(item.isUsed),
+    Boolean(item.isImageCard),
+    (item.images || []).length,
+    item.createdText || ""
+  ]);
+}
+
+function splitMasonryColumns(items, getItemHeight = estimateCardHeight) {
   const leftItems = [];
   const rightItems = [];
   let leftHeight = 0;
   let rightHeight = 0;
 
   items.forEach((item) => {
-    const height = estimateCardHeight(item);
+    const measuredHeight = Number(getItemHeight(item));
+    const height = measuredHeight > 0 ? measuredHeight : estimateCardHeight(item);
     if (leftHeight <= rightHeight) {
       leftItems.push(item);
       leftHeight += height;
@@ -90,6 +111,13 @@ function splitMasonryColumns(items) {
   });
 
   return { leftItems, rightItems };
+}
+
+function haveSameMasonryItems(currentItems, nextItems) {
+  if ((currentItems || []).length !== (nextItems || []).length) return false;
+  return (currentItems || []).every(
+    (item, index) => item.id === nextItems[index].id
+  );
 }
 
 Page({
@@ -382,7 +410,13 @@ Page({
           isImageCard: item.type === "image" || images.length > 0
         };
       });
-    const { leftItems, rightItems } = splitMasonryColumns(items);
+    const getCachedHeight = (item) => {
+      const cached = this.masonryHeightCache && this.masonryHeightCache.get(item.id);
+      return cached && cached.signature === getMasonryItemSignature(item)
+        ? cached.height
+        : estimateCardHeight(item);
+    };
+    const { leftItems, rightItems } = splitMasonryColumns(items, getCachedHeight);
     const nextData = {
       items,
       leftItems,
@@ -392,11 +426,69 @@ Page({
       this.filterKey = filterKey;
       nextData.filters = filters;
     }
-    this.setData(nextData);
+    this.masonryMeasureRevision = Number(this.masonryMeasureRevision || 0) + 1;
+    const measureRevision = this.masonryMeasureRevision;
+    this.setData(nextData, () => {
+      this.rebalanceMasonry(items, measureRevision);
+    });
+  },
+
+  rebalanceMasonry(items, measureRevision) {
+    if (
+      !items.length ||
+      measureRevision !== this.masonryMeasureRevision ||
+      !wx.createSelectorQuery
+    ) {
+      return;
+    }
+    const itemById = new Map(items.map((item) => [String(item.id), item]));
+    const query = wx.createSelectorQuery();
+    const scopedQuery = query.in ? query.in(this) : query;
+    scopedQuery.selectAll(".inspiration-card").boundingClientRect();
+    scopedQuery.exec((results) => {
+      if (measureRevision !== this.masonryMeasureRevision) return;
+      const rects = results && results[0] || [];
+      if (!rects.length) return;
+      const windowInfo = wx.getWindowInfo
+        ? wx.getWindowInfo()
+        : wx.getSystemInfoSync ? wx.getSystemInfoSync() : {};
+      const pxToRpx = windowInfo.windowWidth ? 750 / windowInfo.windowWidth : 1;
+      if (!this.masonryHeightCache) this.masonryHeightCache = new Map();
+
+      rects.forEach((rect) => {
+        const datasetId = rect.dataset && rect.dataset.id;
+        const elementId = String(rect.id || "").replace(/^inspiration-card-/, "");
+        const id = String(datasetId || elementId || "");
+        const item = itemById.get(id);
+        if (!item || !Number(rect.height)) return;
+        this.masonryHeightCache.set(id, {
+          signature: getMasonryItemSignature(item),
+          height: Number(rect.height) * pxToRpx + 18
+        });
+      });
+
+      const balanced = splitMasonryColumns(items, (item) => {
+        const cached = this.masonryHeightCache.get(String(item.id));
+        return cached && cached.signature === getMasonryItemSignature(item)
+          ? cached.height
+          : estimateCardHeight(item);
+      });
+      if (
+        haveSameMasonryItems(this.data.leftItems, balanced.leftItems) &&
+        haveSameMasonryItems(this.data.rightItems, balanced.rightItems)
+      ) {
+        return;
+      }
+      this.setData({
+        leftItems: balanced.leftItems,
+        rightItems: balanced.rightItems
+      });
+    });
   },
 
   onUnload() {
     clearTimeout(this.searchTimer);
+    this.masonryMeasureRevision = Number(this.masonryMeasureRevision || 0) + 1;
   },
 
   openDetail(event) {

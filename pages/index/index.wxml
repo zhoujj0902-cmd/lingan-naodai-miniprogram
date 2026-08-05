@@ -53,7 +53,7 @@
   <view wx:if="{{items.length}}" class="masonry">
     <view class="column">
       <block wx:for="{{leftItems}}" wx:key="id">
-        <view class="inspiration-card {{item.isImageCard ? 'image-card' : 'text-card'}}" bindtap="openDetail" data-id="{{item.id}}">
+        <view id="inspiration-card-{{item.id}}" class="inspiration-card {{item.isImageCard ? 'image-card' : 'text-card'}}" bindtap="openDetail" data-id="{{item.id}}">
           <view wx:if="{{item.isImageCard && item.images.length}}" class="card-image-wrap">
             <image
               class="card-image"
@@ -86,7 +86,7 @@
     </view>
     <view class="column">
       <block wx:for="{{rightItems}}" wx:key="id">
-        <view class="inspiration-card {{item.isImageCard ? 'image-card' : 'text-card'}}" bindtap="openDetail" data-id="{{item.id}}">
+        <view id="inspiration-card-{{item.id}}" class="inspiration-card {{item.isImageCard ? 'image-card' : 'text-card'}}" bindtap="openDetail" data-id="{{item.id}}">
           <view wx:if="{{item.isImageCard && item.images.length}}" class="card-image-wrap">
             <image
               class="card-image"
