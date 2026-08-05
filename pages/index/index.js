@@ -21,8 +21,8 @@ function buildFilters(items) {
   return [
     { key: "all", label: "全部" },
     { key: "sentence", label: "语录" },
-    ...IMAGE_TAGS.map((tag) => ({ key: tag, label: tag })),
-    ...customTags.map((tag) => ({ key: tag, label: tag }))
+    ...customTags.map((tag) => ({ key: tag, label: tag })),
+    ...IMAGE_TAGS.map((tag) => ({ key: tag, label: tag }))
   ];
 }
 
