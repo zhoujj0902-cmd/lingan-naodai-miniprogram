@@ -233,12 +233,8 @@
   line-height: 32rpx;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 10rpx;
-}
-
-.sync-status.idle {
-  visibility: hidden;
 }
 
 .sync-dot {

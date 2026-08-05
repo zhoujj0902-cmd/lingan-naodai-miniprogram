@@ -160,41 +160,23 @@ Page({
     this.syncCloudItems();
   },
 
-  setSyncStatus(text, type) {
-    clearTimeout(this.syncStatusTimer);
-    this.syncStatusTimer = null;
-    this.setData({
-      syncStatusText: text,
-      syncStatusType: type
-    });
-    if (type !== "synced") return;
-    this.syncStatusTimer = setTimeout(() => {
-      if (
-        this.data.syncStatusType === "synced" &&
-        this.data.syncStatusText === text
-      ) {
-        this.setData({
-          syncStatusText: "",
-          syncStatusType: "idle"
-        });
-      }
-      this.syncStatusTimer = null;
-    }, 2000);
-  },
-
   async syncCloudItems() {
     if (this.data.isCloudSyncing) return;
-    this.setData({ isCloudSyncing: true });
-    this.setSyncStatus("正在同步", "syncing");
+    this.setData({
+      isCloudSyncing: true,
+      syncStatusText: "正在同步",
+      syncStatusType: "syncing"
+    });
     try {
       const result = await cloudStore.syncAll();
       this.loadItems();
       this.refreshOpenDetail();
       this.setData({
         hasMoreCloudItems: Boolean(result.hasMore),
+        syncStatusText: "已同步",
+        syncStatusType: "synced",
         imageTags: buildSelectableImageTags(this.data.editImageTag)
       });
-      this.setSyncStatus("已同步", "synced");
       if (result.migratedCount) {
         wx.showToast({ title: "旧数据已同步到云端", icon: "success" });
       }
@@ -208,7 +190,10 @@ Page({
         this.hasShownCloudSyncError = true;
         wx.showToast({ title: "云端同步失败，已显示本地数据", icon: "none" });
       }
-      this.setSyncStatus("离线 · 已显示缓存", "offline");
+      this.setData({
+        syncStatusText: "离线 · 已显示缓存",
+        syncStatusType: "offline"
+      });
     } finally {
       this.setData({ isCloudSyncing: false }, () => {
         if (
@@ -247,8 +232,11 @@ Page({
     ) {
       return;
     }
-    this.setData({ isLoadingMore: true });
-    this.setSyncStatus("正在加载更多", "syncing");
+    this.setData({
+      isLoadingMore: true,
+      syncStatusText: "正在加载更多",
+      syncStatusType: "syncing"
+    });
     try {
       const result = await cloudStore.loadNextPage();
       this.loadItems();
@@ -256,12 +244,16 @@ Page({
         if (updatedCount) this.loadItems();
       });
       this.setData({
-        hasMoreCloudItems: Boolean(result.hasMore)
+        hasMoreCloudItems: Boolean(result.hasMore),
+        syncStatusText: result.hasMore ? "已同步" : "已加载全部",
+        syncStatusType: "synced"
       });
-      this.setSyncStatus(result.hasMore ? "已同步" : "已加载全部", "synced");
     } catch (error) {
       console.error("load more inspirations failed", error);
-      this.setSyncStatus("加载失败 · 上滑重试", "offline");
+      this.setData({
+        syncStatusText: "加载失败 · 上滑重试",
+        syncStatusType: "offline"
+      });
     } finally {
       this.setData({ isLoadingMore: false });
     }
@@ -275,8 +267,11 @@ Page({
     ) {
       return;
     }
-    this.setData({ isLoadingMore: true });
-    this.setSyncStatus("正在加载完整结果", "syncing");
+    this.setData({
+      isLoadingMore: true,
+      syncStatusText: "正在加载完整结果",
+      syncStatusType: "syncing"
+    });
     let hasMore = true;
     try {
       while (hasMore) {
@@ -284,16 +279,20 @@ Page({
         hasMore = Boolean(result.hasMore);
       }
       this.loadItems();
-      this.setData({ hasMoreCloudItems: false });
-      this.setSyncStatus("已加载全部", "synced");
+      this.setData({
+        hasMoreCloudItems: false,
+        syncStatusText: "已加载全部",
+        syncStatusType: "synced"
+      });
     } catch (error) {
       console.error("load complete inspiration results failed", error);
       const meta = store.getSyncMeta();
       this.loadItems();
       this.setData({
-        hasMoreCloudItems: Boolean(meta.hasMore)
+        hasMoreCloudItems: Boolean(meta.hasMore),
+        syncStatusText: "部分结果 · 上滑继续加载",
+        syncStatusType: "offline"
       });
-      this.setSyncStatus("部分结果 · 上滑继续加载", "offline");
     } finally {
       this.setData({ isLoadingMore: false });
     }
@@ -489,7 +488,6 @@ Page({
 
   onUnload() {
     clearTimeout(this.searchTimer);
-    clearTimeout(this.syncStatusTimer);
     this.masonryMeasureRevision = Number(this.masonryMeasureRevision || 0) + 1;
   },
 
@@ -681,9 +679,10 @@ Page({
       editContent,
       editImages,
       editImageTag: editImages.length ? editImageTag || tagStore.getFirstSelectableTag() : "",
-      imageTags: buildSelectableImageTags(editImageTag)
+      imageTags: buildSelectableImageTags(editImageTag),
+      syncStatusText: "已获取其他设备的更新",
+      syncStatusType: "synced"
     });
-    this.setSyncStatus("已获取其他设备的更新", "synced");
     this.loadItems();
     wx.showModal({
       title: "发现其他设备的修改",
