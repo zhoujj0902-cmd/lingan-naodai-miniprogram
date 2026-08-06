@@ -418,6 +418,10 @@
   font-size: 28rpx;
   line-height: 1.55;
   font-weight: 900;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 7;
 }
 
 .card-footer {
@@ -488,6 +492,35 @@
   margin-bottom: 26rpx;
 }
 
+.loading-state {
+  justify-content: center;
+}
+
+.search-loading {
+  min-height: 420rpx;
+}
+
+.state-spinner {
+  width: 54rpx;
+  height: 54rpx;
+  margin-bottom: 28rpx;
+  border: 6rpx solid rgba(117, 84, 226, 0.16);
+  border-top-color: #7554e2;
+  border-radius: 50%;
+  animation: state-spin 0.8s linear infinite;
+}
+
+.retry-button {
+  min-width: 220rpx;
+  padding: 0 34rpx;
+}
+
+@keyframes state-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .fab-add {
   position: fixed;
   right: 36rpx;
@@ -509,13 +542,10 @@
   line-height: 1;
 }
 
-.fab-plus {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 96rpx;
-  line-height: 88rpx;
-  transform: translateY(-4rpx);
+.fab-add-icon {
+  display: block;
+  width: 54rpx;
+  height: 54rpx;
 }
 
 .sheet-mask {

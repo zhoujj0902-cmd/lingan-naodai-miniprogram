@@ -72,7 +72,7 @@ function estimateCardHeight(item) {
   const tagLines = tagLength > 6 ? 2 : 1;
   const bodyMinHeight = hasImages ? 164 : 284;
   const imageHeight = hasImages ? 340 : 0;
-  const textHeight = estimatedTextLines * 44;
+  const textHeight = Math.min(7, estimatedTextLines) * 44;
   const extraTagHeight = tagLines > 1 ? 42 : 0;
   const naturalBodyHeight = 136 + textHeight + extraTagHeight + (content ? 18 : 0);
   return imageHeight + Math.max(bodyMinHeight, naturalBodyHeight) + 18;
@@ -138,6 +138,10 @@ Page({
     isEditSaving: false,
     isCloudSyncing: false,
     isLoadingMore: false,
+    isInitialLoading: false,
+    initialLoadFailed: false,
+    isResolvingResults: false,
+    resultLoadFailed: false,
     hasMoreCloudItems: false,
     syncStatusText: "",
     syncStatusType: "idle",
@@ -152,9 +156,17 @@ Page({
 
   onShow() {
     const syncMeta = store.getSyncMeta();
+    const hasCachedItems = store.getAll().length > 0;
+    const hasActiveFilter =
+      Boolean(String(this.data.keyword || "").trim()) ||
+      this.data.activeType !== "all";
     this.setData({
       imageTags: buildSelectableImageTags(this.data.editImageTag),
-      hasMoreCloudItems: Boolean(syncMeta.hasMore)
+      hasMoreCloudItems: Boolean(syncMeta.hasMore),
+      isInitialLoading: !hasCachedItems && !syncMeta.lastSyncedAt,
+      initialLoadFailed: false,
+      isResolvingResults: hasActiveFilter,
+      resultLoadFailed: false
     });
     this.loadItems();
     this.syncCloudItems();
@@ -162,8 +174,12 @@ Page({
 
   async syncCloudItems() {
     if (this.data.isCloudSyncing) return;
+    const hasActiveFilter =
+      Boolean(String(this.data.keyword || "").trim()) ||
+      this.data.activeType !== "all";
     this.setData({
       isCloudSyncing: true,
+      isResolvingResults: hasActiveFilter && !this.data.items.length,
       syncStatusText: "正在同步",
       syncStatusType: "syncing"
     });
@@ -173,6 +189,8 @@ Page({
       this.refreshOpenDetail();
       this.setData({
         hasMoreCloudItems: Boolean(result.hasMore),
+        initialLoadFailed: false,
+        resultLoadFailed: false,
         syncStatusText: "已同步",
         syncStatusType: "synced",
         imageTags: buildSelectableImageTags(this.data.editImageTag)
@@ -191,19 +209,37 @@ Page({
         wx.showToast({ title: "云端同步失败，已显示本地数据", icon: "none" });
       }
       this.setData({
+        initialLoadFailed: this.data.isInitialLoading && !store.getAll().length,
+        isResolvingResults: false,
+        resultLoadFailed: Boolean(
+          (String(this.data.keyword || "").trim() || this.data.activeType !== "all") &&
+          !this.data.items.length
+        ),
         syncStatusText: "离线 · 已显示缓存",
         syncStatusType: "offline"
       });
     } finally {
-      this.setData({ isCloudSyncing: false }, () => {
+      this.setData({
+        isCloudSyncing: false,
+        isInitialLoading: false
+      }, () => {
         if (
           this.data.hasMoreCloudItems &&
           (String(this.data.keyword || "").trim() || this.data.activeType !== "all")
         ) {
           this.ensureAllCloudItems();
+        } else {
+          this.setData({ isResolvingResults: false });
         }
       });
     }
+  },
+
+  retryInitialLoad() {
+    this.setData({
+      isInitialLoading: true,
+      initialLoadFailed: false
+    }, () => this.syncCloudItems());
   },
 
   refreshOpenDetail() {
@@ -237,6 +273,7 @@ Page({
       syncStatusText: "正在加载更多",
       syncStatusType: "syncing"
     });
+    let loadFailed = false;
     try {
       const result = await cloudStore.loadNextPage();
       this.loadItems();
@@ -249,26 +286,57 @@ Page({
         syncStatusType: "synced"
       });
     } catch (error) {
+      loadFailed = true;
       console.error("load more inspirations failed", error);
       this.setData({
         syncStatusText: "加载失败 · 上滑重试",
         syncStatusType: "offline"
       });
     } finally {
-      this.setData({ isLoadingMore: false });
+      this.setData({ isLoadingMore: false }, () => {
+        const hasActiveFilter =
+          Boolean(String(this.data.keyword || "").trim()) ||
+          this.data.activeType !== "all";
+        if (hasActiveFilter && loadFailed) {
+          this.setData({
+            isResolvingResults: false,
+            resultLoadFailed: !this.data.items.length
+          });
+        } else if (hasActiveFilter && this.data.hasMoreCloudItems) {
+          this.ensureAllCloudItems();
+        } else if (hasActiveFilter) {
+          this.setData({ isResolvingResults: false });
+        }
+      });
     }
   },
 
   async ensureAllCloudItems() {
+    const hasActiveFilter =
+      Boolean(String(this.data.keyword || "").trim()) ||
+      this.data.activeType !== "all";
+    if (!hasActiveFilter) {
+      this.setData({
+        isResolvingResults: false,
+        resultLoadFailed: false
+      });
+      return;
+    }
     if (
       this.data.isCloudSyncing ||
-      this.data.isLoadingMore ||
-      !this.data.hasMoreCloudItems
+      this.data.isLoadingMore
     ) {
+      this.setData({ isResolvingResults: true });
+      return;
+    }
+    if (!this.data.hasMoreCloudItems) {
+      this.setData({ isResolvingResults: false });
       return;
     }
     this.setData({
       isLoadingMore: true,
+      isResolvingResults: true,
+      resultLoadFailed: false,
       syncStatusText: "正在加载完整结果",
       syncStatusType: "syncing"
     });
@@ -290,11 +358,15 @@ Page({
       this.loadItems();
       this.setData({
         hasMoreCloudItems: Boolean(meta.hasMore),
+        resultLoadFailed: !this.data.items.length,
         syncStatusText: "部分结果 · 上滑继续加载",
         syncStatusType: "offline"
       });
     } finally {
-      this.setData({ isLoadingMore: false });
+      this.setData({
+        isLoadingMore: false,
+        isResolvingResults: false
+      });
     }
   },
 
@@ -344,7 +416,17 @@ Page({
   },
 
   onSearchInput(event) {
-    this.setData({ keyword: event.detail.value });
+    const keyword = event.detail.value;
+    const hasActiveFilter = Boolean(String(keyword || "").trim()) || this.data.activeType !== "all";
+    this.setData({
+      keyword,
+      resultLoadFailed: false,
+      isResolvingResults: hasActiveFilter && (
+        this.data.isCloudSyncing ||
+        this.data.isLoadingMore ||
+        this.data.hasMoreCloudItems
+      )
+    });
     clearTimeout(this.searchTimer);
     this.searchTimer = setTimeout(() => {
       this.loadItems();
@@ -355,9 +437,19 @@ Page({
   },
 
   onFilterTap(event) {
-    this.setData({ activeType: event.currentTarget.dataset.type }, () => {
+    const activeType = event.currentTarget.dataset.type;
+    const hasActiveFilter = Boolean(String(this.data.keyword || "").trim()) || activeType !== "all";
+    this.setData({
+      activeType,
+      resultLoadFailed: false,
+      isResolvingResults: hasActiveFilter && (
+        this.data.isCloudSyncing ||
+        this.data.isLoadingMore ||
+        this.data.hasMoreCloudItems
+      )
+    }, () => {
       this.loadItems();
-      if (this.data.activeType !== "all") {
+      if (String(this.data.keyword || "").trim() || this.data.activeType !== "all") {
         this.ensureAllCloudItems();
       }
     });
@@ -365,12 +457,33 @@ Page({
 
   onSearchButtonTap() {
     if (this.data.keyword) {
-      this.setData({ keyword: "" }, () => {
+      this.setData({
+        keyword: "",
+        resultLoadFailed: false,
+        isResolvingResults: this.data.activeType !== "all" && (
+          this.data.isCloudSyncing ||
+          this.data.isLoadingMore ||
+          this.data.hasMoreCloudItems
+        )
+      }, () => {
         this.loadItems();
       });
       return;
     }
     wx.hideKeyboard();
+  },
+
+  retrySearchResults() {
+    this.setData({
+      resultLoadFailed: false,
+      isResolvingResults: true
+    }, () => {
+      if (this.data.syncStatusType === "offline") {
+        this.syncCloudItems();
+      } else {
+        this.ensureAllCloudItems();
+      }
+    });
   },
 
   loadItems() {

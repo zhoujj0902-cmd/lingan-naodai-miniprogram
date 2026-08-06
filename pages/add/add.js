@@ -6,6 +6,25 @@ const imageUtils = require("../../utils/image");
 const security = require("../../utils/security");
 const tagStore = require("../../utils/tagStore");
 const CUSTOM_TAG_KEY = "__custom__";
+const DRAFT_KEY = "addInspirationDraft";
+const DRAFT_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+
+function readDraft() {
+  try {
+    const draft = wx.getStorageSync(DRAFT_KEY);
+    return draft && typeof draft === "object" ? draft : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function clearDraftStorage() {
+  try {
+    wx.removeStorageSync(DRAFT_KEY);
+  } catch (error) {
+    console.warn("clear add inspiration draft failed", error);
+  }
+}
 
 Page({
   data: {
@@ -22,6 +41,10 @@ Page({
     isSaving: false
   },
 
+  onLoad() {
+    this.restoreDraft();
+  },
+
   onShow() {
     this.loadImageTags();
     cloudStore.syncTagSettings()
@@ -30,11 +53,70 @@ Page({
     this.checkClipboard();
   },
 
+  onHide() {
+    clearTimeout(this.draftSaveTimer);
+    this.saveDraftNow();
+  },
+
   loadImageTags() {
     this.setData({
       imageTags: tagStore.getDefaultTags(),
       customImageTags: tagStore.getAll()
     });
+  },
+
+  restoreDraft() {
+    const draft = readDraft();
+    if (!draft) return;
+    const images = Array.isArray(draft.images) ? draft.images.filter(Boolean).slice(0, 9) : [];
+    const isExpired = Date.now() - Number(draft.updatedAt || 0) > DRAFT_MAX_AGE;
+    if (isExpired) {
+      images.forEach(imageUtils.removeSavedImage);
+      clearDraftStorage();
+      return;
+    }
+    const content = String(draft.content || "");
+    if (!content.trim() && !images.length) {
+      clearDraftStorage();
+      return;
+    }
+    this.setData({
+      lastImportedClipboard: String(draft.acceptedClipboard || ""),
+      acceptedClipboard: String(draft.acceptedClipboard || ""),
+      content,
+      images,
+      selectedImageTag: images.length ? String(draft.selectedImageTag || "") : "",
+      isCustomImageTag: images.length && Boolean(draft.isCustomImageTag),
+      customImageTag: images.length ? String(draft.customImageTag || "") : ""
+    });
+  },
+
+  scheduleDraftSave() {
+    clearTimeout(this.draftSaveTimer);
+    this.draftSaveTimer = setTimeout(() => this.saveDraftNow(), 300);
+  },
+
+  saveDraftNow() {
+    if (this.data.hasSaved) return;
+    const content = String(this.data.content || "");
+    const images = (this.data.images || []).filter(Boolean);
+    if (!content.trim() && !images.length) {
+      clearDraftStorage();
+      return;
+    }
+    try {
+      wx.setStorageSync(DRAFT_KEY, {
+        content,
+        images,
+        selectedImageTag: this.data.selectedImageTag || "",
+        isCustomImageTag: Boolean(this.data.isCustomImageTag),
+        customImageTag: this.data.customImageTag || "",
+        acceptedClipboard: this.data.acceptedClipboard || "",
+        updatedAt: Date.now()
+      });
+    } catch (error) {
+      console.warn("save add inspiration draft failed", error);
+    }
   },
 
   checkClipboard() {
@@ -53,14 +135,14 @@ Page({
             lastImportedClipboard: text,
             content: text,
             acceptedClipboard: text
-          });
+          }, () => this.scheduleDraftSave());
         }
       }
     });
   },
 
   onContentInput(event) {
-    this.setData({ content: event.detail.value });
+    this.setData({ content: event.detail.value }, () => this.scheduleDraftSave());
   },
 
   chooseImage() {
@@ -91,7 +173,7 @@ Page({
             selectedImageTag: this.data.selectedImageTag || tagStore.getFirstSelectableTag(),
             imageTags: tagStore.getDefaultTags(),
             customImageTags: tagStore.getAll()
-          });
+          }, () => this.scheduleDraftSave());
           security.precheckImages(nextImages);
         }
       }
@@ -103,11 +185,11 @@ Page({
     this.setData({
       selectedImageTag: tag,
       isCustomImageTag: tag === CUSTOM_TAG_KEY
-    });
+    }, () => this.scheduleDraftSave());
   },
 
   onCustomImageTagInput(event) {
-    this.setData({ customImageTag: event.detail.value });
+    this.setData({ customImageTag: event.detail.value }, () => this.scheduleDraftSave());
   },
 
   removeImageTag(event) {
@@ -129,7 +211,7 @@ Page({
           customImageTags: tagStore.getAll(),
           selectedImageTag: isSelected ? tagStore.getFirstSelectableTag() : this.data.selectedImageTag,
           isCustomImageTag: isSelected ? false : this.data.isCustomImageTag
-        });
+        }, () => this.scheduleDraftSave());
       }
     });
   },
@@ -144,7 +226,11 @@ Page({
       selectedImageTag: images.length ? this.data.selectedImageTag || tagStore.getFirstSelectableTag() : "",
       isCustomImageTag: images.length ? this.data.isCustomImageTag : false,
       customImageTag: images.length ? this.data.customImageTag : ""
-    });
+    }, () => this.scheduleDraftSave());
+  },
+
+  onDraftImageError(event) {
+    this.removeImage(event);
   },
 
   async save() {
@@ -211,6 +297,8 @@ Page({
         if (this.data.acceptedClipboard) {
           clipboardStore.add(this.data.acceptedClipboard);
         }
+        clearTimeout(this.draftSaveTimer);
+        clearDraftStorage();
         toast = { title: "已放进灵感脑袋", icon: "success" };
         shouldNavigate = true;
         this.setData({
@@ -257,8 +345,7 @@ Page({
   },
 
   onUnload() {
-    if (!this.data.hasSaved) {
-      this.data.images.forEach(imageUtils.removeSavedImage);
-    }
+    clearTimeout(this.draftSaveTimer);
+    this.saveDraftNow();
   }
 });

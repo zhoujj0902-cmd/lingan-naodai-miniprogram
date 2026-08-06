@@ -50,7 +50,20 @@
     <text>{{syncStatusText || " "}}</text>
   </view>
 
-  <view wx:if="{{items.length}}" class="masonry">
+  <view wx:if="{{isInitialLoading && !items.length}}" class="empty-state loading-state">
+    <view class="state-spinner"></view>
+    <text class="empty-title">正在找回你的灵感</text>
+    <text class="empty-desc">稍等一下，马上就好。</text>
+  </view>
+
+  <view wx:elif="{{initialLoadFailed && !items.length}}" class="empty-state loading-state">
+    <image class="empty-image" src="/assets/empty-box.png" mode="aspectFit" />
+    <text class="empty-title">暂时没加载出来</text>
+    <text class="empty-desc">网络恢复后，可以再试一次。</text>
+    <button class="secondary retry-button" bindtap="retryInitialLoad">重新加载</button>
+  </view>
+
+  <view wx:elif="{{items.length}}" class="masonry">
     <view class="column">
       <block wx:for="{{leftItems}}" wx:key="id">
         <view id="inspiration-card-{{item.id}}" class="inspiration-card {{item.isImageCard ? 'image-card' : 'text-card'}}" bindtap="openDetail" data-id="{{item.id}}">
@@ -119,6 +132,18 @@
     </view>
   </view>
 
+  <view wx:elif="{{isResolvingResults}}" class="empty-state loading-state search-loading">
+    <view class="state-spinner"></view>
+    <text class="empty-title">正在打捞灵感</text>
+  </view>
+
+  <view wx:elif="{{resultLoadFailed}}" class="empty-state search-empty">
+    <image class="empty-image" src="/assets/empty-box.png" mode="aspectFit" />
+    <text class="empty-title">这次还没找完</text>
+    <text class="empty-desc">网络恢复后，可以继续查找。</text>
+    <button class="secondary retry-button" bindtap="retrySearchResults">继续查找</button>
+  </view>
+
   <view wx:elif="{{keyword || activeType !== 'all'}}" class="empty-state search-empty">
     <image class="empty-image" src="/assets/empty-box.png" mode="aspectFit" />
     <text class="empty-title">没找到这条灵感</text>
@@ -133,7 +158,7 @@
   </view>
 
   <view wx:if="{{items.length || keyword || activeType !== 'all'}}" class="fab-add" bindtap="goAdd" aria-label="新增灵感">
-    <text class="fab-plus">+</text>
+    <image class="fab-add-icon" src="/assets/icon-add.svg" mode="aspectFit" />
   </view>
 
   <view wx:if="{{selectedItem}}" class="sheet-mask" bindtap="closeDetail">
