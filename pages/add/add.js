@@ -76,7 +76,20 @@ Page({
   },
 
   onContentInput(event) {
-    this.setData({ content: event.detail.value });
+    const content = event.detail.value;
+    const acceptedClipboard = this.data.acceptedClipboard;
+    if (
+      acceptedClipboard &&
+      String(content || "").trim() !== acceptedClipboard
+    ) {
+      clipboardStore.add(acceptedClipboard);
+      this.setData({
+        content,
+        acceptedClipboard: ""
+      });
+      return;
+    }
+    this.setData({ content });
   },
 
   chooseImage() {
@@ -274,6 +287,9 @@ Page({
 
   onUnload() {
     if (!this.data.hasSaved) {
+      if (this.data.acceptedClipboard) {
+        clipboardStore.add(this.data.acceptedClipboard);
+      }
       this.data.images.forEach(imageUtils.removeSavedImage);
     }
   }
