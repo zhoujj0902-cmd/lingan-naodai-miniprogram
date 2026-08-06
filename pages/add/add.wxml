@@ -21,7 +21,7 @@
         <view class="preview-grid">
           <block wx:for="{{images}}" wx:key="*this">
             <view class="preview-item">
-              <image class="preview" src="{{item}}" mode="aspectFill" lazy-load data-index="{{index}}" binderror="onDraftImageError" />
+              <image class="preview" src="{{item}}" mode="aspectFill" lazy-load />
               <view class="remove-image" data-index="{{index}}" catchtap="removeImage">×</view>
             </view>
           </block>
