@@ -9,7 +9,7 @@ const CUSTOM_TAG_KEY = "__custom__";
 
 Page({
   data: {
-    lastPromptedClipboard: "",
+    lastImportedClipboard: "",
     acceptedClipboard: "",
     content: "",
     images: [],
@@ -41,27 +41,18 @@ Page({
     wx.getClipboardData({
       success: (res) => {
         const text = String(res.data || "").trim();
+        const currentContent = this.data.content.trim();
         if (
           text &&
-          text !== this.data.content.trim() &&
-          text !== this.data.lastPromptedClipboard &&
+          !currentContent &&
+          text !== this.data.lastImportedClipboard &&
           !clipboardStore.has(text) &&
           !store.hasContent(text)
         ) {
-          this.setData({ lastPromptedClipboard: text });
-          wx.showModal({
-            title: "检测到复制内容",
-            content: "要把这段文字塞进灵感脑袋吗？",
-            confirmText: "塞进来",
-            cancelText: "不用",
-            success: (modalRes) => {
-              if (modalRes.confirm) {
-                this.setData({
-                  content: text,
-                  acceptedClipboard: text
-                });
-              }
-            }
+          this.setData({
+            lastImportedClipboard: text,
+            content: text,
+            acceptedClipboard: text
           });
         }
       }
@@ -223,7 +214,7 @@ Page({
         toast = { title: "已放进灵感脑袋", icon: "success" };
         shouldNavigate = true;
         this.setData({
-          lastPromptedClipboard: "",
+          lastImportedClipboard: "",
           acceptedClipboard: "",
           content: "",
           images: [],
