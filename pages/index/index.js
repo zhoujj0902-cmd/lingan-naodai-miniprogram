@@ -4,17 +4,19 @@ const duplicate = require("../../utils/duplicate");
 const imageUtils = require("../../utils/image");
 const security = require("../../utils/security");
 const tagStore = require("../../utils/tagStore");
-const { IMAGE_TAGS } = require("../../utils/constants");
+const OTHER_IMAGE_TAG = "其他";
 
 function normalizeImageTag(tag) {
   return String(tag || "").trim();
 }
 
 function buildFilters(items) {
+  const defaultTags = tagStore.getDefaultTags();
+  const activeCustomTagSet = new Set(tagStore.getAll());
   const customTags = [];
   items.forEach((item) => {
     const tag = normalizeImageTag(item.imageTag);
-    if (tag && !IMAGE_TAGS.includes(tag) && !customTags.includes(tag)) {
+    if (activeCustomTagSet.has(tag) && !customTags.includes(tag)) {
       customTags.push(tag);
     }
   });
@@ -22,8 +24,17 @@ function buildFilters(items) {
     { key: "all", label: "全部" },
     { key: "sentence", label: "语录" },
     ...customTags.map((tag) => ({ key: tag, label: tag })),
-    ...IMAGE_TAGS.map((tag) => ({ key: tag, label: tag }))
+    ...defaultTags.map((tag) => ({ key: tag, label: tag }))
   ];
+}
+
+function buildActiveImageTagSet() {
+  return new Set([...tagStore.getDefaultTags(), ...tagStore.getAll()]);
+}
+
+function getDisplayImageTag(tag, activeImageTagSet) {
+  const normalizedTag = normalizeImageTag(tag);
+  return activeImageTagSet.has(normalizedTag) ? normalizedTag : OTHER_IMAGE_TAG;
 }
 
 function buildSelectableImageTags(extraTag) {
@@ -61,7 +72,7 @@ function rebaseEditImages(baseItem, latestItem, draftImages) {
 
 function estimateCardHeight(item) {
   const content = String(item.content || "");
-  const tagLength = String(item.imageTag || "").length;
+  const tagLength = String(item.displayImageTag || item.imageTag || "").length;
   const hasImages = item.images && item.images.length;
   const estimatedTextLines = content
     ? content.split(/\r?\n/).reduce(
@@ -82,7 +93,7 @@ function getMasonryItemSignature(item) {
   return JSON.stringify([
     item.version || 0,
     item.content || "",
-    item.imageTag || "",
+    item.displayImageTag || item.imageTag || "",
     item.statusText || "",
     Boolean(item.isPinned),
     Boolean(item.isUsed),
@@ -487,10 +498,14 @@ Page({
   },
 
   loadItems() {
-    const activeType = this.data.activeType;
     const keyword = String(this.data.keyword || "").trim().toLowerCase();
     const allItems = store.getAll();
     const filters = buildFilters(allItems);
+    const filterKeys = new Set(filters.map((item) => item.key));
+    const activeType = filterKeys.has(this.data.activeType)
+      ? this.data.activeType
+      : OTHER_IMAGE_TAG;
+    const activeImageTagSet = buildActiveImageTagSet();
     const filterKey = filters.map((item) => item.key).join("|");
     const items = allItems
       .filter((item) => {
@@ -506,7 +521,10 @@ Page({
         if (activeType === "sentence") {
           return !hasImages && (item.type === "sentence" || item.type === "reply");
         }
-        return hasImages && normalizeImageTag(item.imageTag) === activeType;
+        return (
+          hasImages &&
+          getDisplayImageTag(item.imageTag, activeImageTagSet) === activeType
+        );
       })
       .map((item) => {
         const images = item.images || [];
@@ -517,6 +535,9 @@ Page({
           createdText: store.formatDate(item.createdAt),
           statusText: item.isPinned ? "置顶" : item.isUsed ? "用过了" : "待用",
           imageTag: normalizeImageTag(item.imageTag),
+          displayImageTag: images.length
+            ? getDisplayImageTag(item.imageTag, activeImageTagSet)
+            : "",
           images,
           thumbnails,
           cardImage: useOriginal ? images[0] : thumbnails[0] || images[0],
@@ -535,6 +556,9 @@ Page({
       leftItems,
       rightItems
     };
+    if (activeType !== this.data.activeType) {
+      nextData.activeType = activeType;
+    }
     if (this.filterKey !== filterKey) {
       this.filterKey = filterKey;
       nextData.filters = filters;

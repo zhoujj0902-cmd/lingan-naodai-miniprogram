@@ -34,12 +34,12 @@
           <view class="tag-list">
             <block wx:for="{{imageTags}}" wx:key="*this">
               <view
-                class="tag-chip removable {{selectedImageTag === item ? 'active' : ''}}"
+                class="tag-chip {{item !== '其他' ? 'removable' : ''}} {{selectedImageTag === item ? 'active' : ''}}"
                 data-tag="{{item}}"
                 bindtap="selectImageTag"
               >
                 <text class="tag-chip-text">{{item}}</text>
-                <text class="tag-delete" data-tag="{{item}}" catchtap="removeImageTag">×</text>
+                <text wx:if="{{item !== '其他'}}" class="tag-delete" data-tag="{{item}}" catchtap="removeImageTag">×</text>
               </view>
             </block>
             <block wx:for="{{customImageTags}}" wx:key="*this">

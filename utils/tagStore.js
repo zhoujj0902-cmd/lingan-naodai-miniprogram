@@ -3,6 +3,7 @@ const { IMAGE_TAGS } = require("./constants");
 const CUSTOM_KEY = "customImageTags";
 const HIDDEN_DEFAULT_KEY = "hiddenDefaultImageTags";
 const DIRTY_KEY = "imageTagsCloudDirty";
+const FALLBACK_TAG = "其他";
 
 function normalizeTag(tag) {
   return String(tag || "").trim().slice(0, 8);
@@ -29,7 +30,13 @@ function getHiddenDefaultTags() {
   const tags = wx.getStorageSync(HIDDEN_DEFAULT_KEY) || [];
   return tags
     .map(normalizeTag)
-    .filter((tag, index, list) => tag && IMAGE_TAGS.includes(tag) && list.indexOf(tag) === index);
+    .filter(
+      (tag, index, list) =>
+        tag &&
+        tag !== FALLBACK_TAG &&
+        IMAGE_TAGS.includes(tag) &&
+        list.indexOf(tag) === index
+    );
 }
 
 function saveHiddenDefaultTags(tags, shouldMarkDirty = true) {
@@ -75,6 +82,7 @@ function add(tag) {
 
 function remove(tag) {
   const normalized = normalizeTag(tag);
+  if (normalized === FALLBACK_TAG) return getAll();
   if (IMAGE_TAGS.includes(normalized)) {
     const hiddenTags = getHiddenDefaultTags();
     if (!hiddenTags.includes(normalized)) {

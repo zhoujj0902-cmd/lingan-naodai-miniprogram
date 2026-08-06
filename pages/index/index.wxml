@@ -85,7 +85,7 @@
           <view class="card-body">
             <view class="card-tags">
               <text wx:if="{{!(item.isImageCard && item.isPinned)}}" class="badge {{item.isUsed ? 'used' : ''}}">{{item.statusText}}</text>
-              <text wx:if="{{item.imageTag}}" class="image-tag">{{item.imageTag}}</text>
+              <text wx:if="{{item.displayImageTag}}" class="image-tag">{{item.displayImageTag}}</text>
             </view>
             <text wx:if="{{item.content}}" class="quote">{{item.content}}</text>
             <view class="card-footer">
@@ -118,7 +118,7 @@
           <view class="card-body">
             <view class="card-tags">
               <text wx:if="{{!(item.isImageCard && item.isPinned)}}" class="badge {{item.isUsed ? 'used' : ''}}">{{item.statusText}}</text>
-              <text wx:if="{{item.imageTag}}" class="image-tag">{{item.imageTag}}</text>
+              <text wx:if="{{item.displayImageTag}}" class="image-tag">{{item.displayImageTag}}</text>
             </view>
             <text wx:if="{{item.content}}" class="quote">{{item.content}}</text>
             <view class="card-footer">
